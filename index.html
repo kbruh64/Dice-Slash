@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Dice Slash</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; display:flex; justify-content:center; align-items:center; height:100vh; overflow:hidden; }
+canvas { display:block; }
+</style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+<script>
+// ── Resolution ─────────────────────────────────────────────────────────────
+const W = 360, H = 640;
+
+// ── Palette ────────────────────────────────────────────────────────────────
+const C = {
+  sky0: 0x0af0d0, sky1: 0x06b8b0, sky2: 0x048880,
+  islandG: 0x22cc55, islandD: 0x117733, islandRock: 0x886644,
+  path0: 0x9b7d5a, path1: 0x7a5e3a, pathEdge: 0x5c4020,
+  pathGlow: 0xffe066,
+  heroBody: 0x3355ee, heroSkin: 0xf5deb3, heroHair: 0xffffff,
+  heroTrim: 0xffd700, heroGlow: 0xaa66ff,
+  sword: 0xd0eeff, swordGlow: 0x88ccff,
+  slime: 0x55ee33, slimeD: 0x22aa11, slimeHL: 0xccffaa,
+  crown: 0xffd700, crownGem: 0xff3366,
+  fire: 0xff6600, ice: 0x44ddff, poison: 0x55ff44,
+  uiBg: 0x0a0820, uiBdr: 0x7744dd,
+  gold: 0xffd700, hp: 0xff3355, xp: 0x33aaff,
+  btn: 0x2244dd, btnH: 0x4466ff,
+  comboColors: [0xffffff, 0x88ffcc, 0xff9900, 0xff5500, 0xff2200, 0xffdd00, 0xff00ff],
+};
+
+// ── Dice Manager ───────────────────────────────────────────────────────────
+class DiceManager {
+  constructor() {
+    this.count = 1; this.maxRerolls = 1; this.rerolls = 1;
+    this.elements = ['none']; this.values = [];
+    this.roll();
+  }
+  addDie()          { if (this.count < 5) { this.count++; this.elements.push('none'); } }
+  infuse(el)        { for (let i = 0; i < this.count; i++) { if (this.elements[i] === 'none') { this.elements[i] = el; break; } } }
+  addReroll()       { this.maxRerolls++; }
+  roll()            { this.values = Array.from({ length: this.count }, () => Math.ceil(Math.random() * 6)); }
+  reroll()          { if (this.rerolls <= 0) return false; this.roll(); this.rerolls--; return true; }
+  resetRerolls()    { this.rerolls = this.maxRerolls; }
+
+  evaluate() {
+    const freq = {};
+    this.values.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
+    const counts = Object.values(freq).sort((a, b) => b - a);
+    const max = counts[0], sec = counts[1] || 0;
+    let h = 0;
+    if (max === 5) h = 6;
+    else if (max === 4) h = 5;
+    else if (max === 3 && sec === 2) h = 4;
+    else if (max === 3) h = 3;
+    else if (max === 2 && sec === 2) h = 2;
+    else if (max === 2) h = 1;
+
+    const NAMES = ['High Die', 'One Pair', 'Two Pair', 'Three of a Kind', 'Full House', 'Four of a Kind', 'FIVE OF A KIND'];
+    const MULT  = [1, 2, 3, 5, 7, 12, 20];
+    let elMult = 1;
+    const els = this.elements.slice(0, this.count);
+    if (els.includes('fire'))   elMult += 0.4;
+    if (els.includes('ice'))    elMult += 0.2;
+    if (els.includes('poison')) elMult += 0.3;
+    const base = this.values.reduce((a, b) => a + b, 0);
+    return { name: NAMES[h], tier: h, mult: MULT[h], damage: Math.round(base * MULT[h] * elMult), els };
+  }
+}
+
+// ── Game Scene ─────────────────────────────────────────────────────────────
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+
+  create() {
+    this.dice = new DiceManager();
+    this.pHP = 100; this.pMaxHP = 100;
+    this.eHP = 80;  this.eMaxHP = 80;
+    this.xp = 0; this.xpNext = 30;
+    this.level = 1; this.wave = 1;
+    this.autoTimer = 0; this.autoDelay = 2500;
+    this.busy = false; this.lvlUp = false;
+    this.pathScroll = 0; this.tick = 0;
+    this.comboStreak = 0; this.comboTimer = 0;
+    this.blazeReady = false; this.shieldUp = false;
+    this.abilities = {};
+
+    // ── 3/4 perspective layout ──────────────────────────────────────
+    // Hero: bottom center
+    this.hx = W / 2; this.hy = H * 0.72;
+    // Enemy: center, up the path
+    this.ex = W / 2; this.ey = H * 0.34;
+
+    // Layers
+    this.layerBG    = this.add.graphics().setDepth(0);
+    this.layerPath  = this.add.graphics().setDepth(1);
+    this.layerFX    = this.add.graphics().setDepth(4);
+    this.layerE     = this.add.graphics().setDepth(5);
+    this.layerH     = this.add.graphics().setDepth(6);
+    this.layerUI    = this.add.graphics().setDepth(20);
+    this.layerDice  = this.add.graphics().setDepth(25);
+    this.layerBtn   = this.add.graphics().setDepth(26);
+    this.layerVig   = this.add.graphics().setDepth(40);
+
+    this.buildStaticVignette();
+    this.buildTexts();
+    this.buildButtons();
+    this.buildLevelPanel();
+  }
+
+  // ── Vignette (static, drawn once) ─────────────────────────────────
+  buildStaticVignette() {
+    const g = this.layerVig;
+    g.fillGradientStyle(0x000000,0x000000,0x000000,0x000000,0.75,0.75,0,0);
+    g.fillRect(0, 0, W, H * 0.12);
+    g.fillGradientStyle(0x000000,0x000000,0x000000,0x000000,0,0,0.8,0.8);
+    g.fillRect(0, H * 0.88, W, H * 0.12);
+    g.fillGradientStyle(0x000000,0x000000,0x000000,0x000000,0.4,0,0.4,0);
+    g.fillRect(0, 0, W * 0.07, H);
+    g.fillGradientStyle(0x000000,0x000000,0x000000,0x000000,0,0.4,0,0.4);
+    g.fillRect(W * 0.93, 0, W * 0.07, H);
+  }
+
+  // ── Texts ──────────────────────────────────────────────────────────
+  buildTexts() {
+    const style = (sz, col, str=3) => ({
+      fontFamily: 'Arial Black', fontSize: `${sz}px`, color: col,
+      stroke: '#000000', strokeThickness: str,
+    });
+    this.waveTxt   = this.add.text(W/2, 14, 'WAVE 1',    style(14,'#ffd700',4)).setOrigin(0.5).setDepth(21);
+    this.levelTxt  = this.add.text(W/2, 30, 'LV 1',      style(11,'#ccaaff',3)).setOrigin(0.5).setDepth(21);
+    this.handTxt   = this.add.text(W/2, H*0.797, '',     style(11,'#ffd700',3)).setOrigin(0.5).setDepth(27);
+    this.rerollTxt = this.add.text(W/2, H*0.812, '',     style(9, '#aaaaff',2)).setOrigin(0.5).setDepth(27);
+    this.hpNumTxt  = this.add.text(0, 0, '',             style(8, '#ffffff',2)).setOrigin(0.5).setDepth(22);
+  }
+
+  // ── Buttons ────────────────────────────────────────────────────────
+  buildButtons() {
+    // Diamond ATTACK button
+    const ax = W / 2, ay = H - 36;
+    this.atkG = this.add.graphics().setDepth(26);
+    this.drawDiamondBtn(this.atkG, ax, ay, 70, 28, C.btn, 'ATTACK', 12);
+    const az = this.add.zone(ax - 38, ay - 16, 76, 32).setOrigin(0).setDepth(27).setInteractive();
+    az.on('pointerdown', () => this.onAttack());
+    az.on('pointerover', () => this.drawDiamondBtn(this.atkG, ax, ay, 70, 28, C.btnH, 'ATTACK', 12));
+    az.on('pointerout',  () => this.drawDiamondBtn(this.atkG, ax, ay, 70, 28, C.btn, 'ATTACK', 12));
+
+    // REROLL button
+    const rx = W / 2 - 90, ry = H - 36;
+    this.rrG = this.add.graphics().setDepth(26);
+    this.drawDiamondBtn(this.rrG, rx, ry, 52, 22, 0x440088, 'REROLL', 9);
+    const rz = this.add.zone(rx - 28, ry - 13, 56, 26).setOrigin(0).setDepth(27).setInteractive();
+    rz.on('pointerdown', () => this.onReroll());
+    rz.on('pointerover', () => this.drawDiamondBtn(this.rrG, rx, ry, 52, 22, 0x6600cc, 'REROLL', 9));
+    rz.on('pointerout',  () => this.drawDiamondBtn(this.rrG, rx, ry, 52, 22, 0x440088, 'REROLL', 9));
+  }
+
+  drawDiamondBtn(g, cx, cy, w, h, col, label, fs) {
+    g.clear();
+    // Shadow
+    g.fillStyle(0x000000, 0.55);
+    g.fillRoundedRect(cx - w/2 + 3, cy - h/2 + 3, w, h, 8);
+    // Outer glow
+    g.fillStyle(col, 0.25);
+    g.fillRoundedRect(cx - w/2 - 4, cy - h/2 - 4, w + 8, h + 8, 12);
+    // Body
+    g.fillStyle(col);
+    g.fillRoundedRect(cx - w/2, cy - h/2, w, h, 8);
+    // Top shine
+    g.fillStyle(0xffffff, 0.28);
+    g.fillRoundedRect(cx - w/2 + 4, cy - h/2 + 4, w - 8, h * 0.4, 5);
+    // Bright border
+    g.lineStyle(2, 0xffffff, 0.6);
+    g.strokeRoundedRect(cx - w/2, cy - h/2, w, h, 8);
+
+    const k = `_btnlbl_${cx}_${cy}`;
+    if (this[k]) this[k].destroy();
+    this[k] = this.add.text(cx, cy, label, {
+      fontFamily: 'Arial Black', fontSize: `${fs}px`, color: '#ffffff', stroke: '#000033', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(28);
+  }
+
+  // ── BG: sky + floating islands ────────────────────────────────────
+  drawBG() {
+    const g = this.layerBG, t = this.tick;
+    g.clear();
+
+    // Sky gradient (bright teal like screenshot)
+    g.fillGradientStyle(0x00d4c8, 0x00d4c8, 0x007a8a, 0x007a8a, 1);
+    g.fillRect(0, 0, W, H * 0.62);
+
+    // Sun / light source top
+    g.fillStyle(0xffffff, 0.12); g.fillCircle(W * 0.5, -30, 140);
+    g.fillStyle(0xffffff, 0.06); g.fillCircle(W * 0.5, -30, 220);
+
+    // Clouds
+    const clouds = [
+      [40, 60, 60, 20], [120, 40, 80, 22], [230, 70, 70, 18],
+      [310, 45, 55, 16], [70, 100, 45, 14], [260, 110, 65, 17],
+    ];
+    clouds.forEach(([cx, cy, cw, ch], i) => {
+      const drift = Math.sin(t * 0.0004 + i * 1.2) * 8;
+      g.fillStyle(0xffffff, 0.55);
+      g.fillEllipse(cx + drift, cy, cw, ch);
+      g.fillStyle(0xffffff, 0.35);
+      g.fillEllipse(cx + drift - cw * 0.25, cy + 4, cw * 0.6, ch * 0.75);
+      g.fillEllipse(cx + drift + cw * 0.22, cy + 6, cw * 0.55, ch * 0.7);
+    });
+
+    // Floating islands (bg, smaller)
+    const islands = [
+      [W * 0.1, H * 0.2, 44, 20, 0x33bb66, 0x225522],
+      [W * 0.88, H * 0.18, 38, 16, 0x44cc55, 0x225522],
+      [W * 0.15, H * 0.38, 30, 14, 0x22aa44, 0x113322],
+      [W * 0.82, H * 0.35, 36, 15, 0x33bb55, 0x225533],
+    ];
+    islands.forEach(([ix, iy, iw, ih, top, bot], i) => {
+      const fl = Math.sin(t * 0.0008 + i * 1.8) * 4;
+      // Rock base
+      g.fillStyle(C.islandRock, 0.9);
+      g.fillEllipse(ix, iy + fl + ih * 0.6, iw * 0.85, ih * 0.55);
+      // Green top
+      g.fillStyle(bot);
+      g.fillEllipse(ix, iy + fl, iw, ih * 0.65);
+      g.fillStyle(top);
+      g.fillEllipse(ix, iy + fl - 2, iw * 0.9, ih * 0.5);
+      // Highlight
+      g.fillStyle(0xffffff, 0.2);
+      g.fillEllipse(ix - iw * 0.1, iy + fl - ih * 0.1, iw * 0.35, ih * 0.2);
+    });
+
+    // Ground / terrain (lower half)
+    g.fillGradientStyle(0x115533, 0x115533, 0x0a2211, 0x0a2211, 1);
+    g.fillRect(0, H * 0.62, W, H * 0.38);
+
+    // Grass top edge
+    g.fillStyle(0x33cc55, 0.9); g.fillRect(0, H * 0.62, W, 8);
+    g.fillStyle(0x55ee77, 0.4); g.fillRect(0, H * 0.62, W, 3);
+    // Grass tufts
+    for (let gx = 4; gx < W; gx += 14) {
+      const h2 = 6 + Math.sin(gx * 0.3) * 2;
+      g.fillStyle(0x33cc55, 0.7);
+      g.fillTriangle(gx, H * 0.62 + 8, gx + 5, H * 0.62 + 8, gx + 2.5, H * 0.62 + 8 - h2);
+    }
+  }
+
+  // ── Path: trapezoid perspective road ──────────────────────────────
+  drawPath() {
+    const g = this.layerPath, t = this.tick;
+    g.clear();
+
+    // Path: wide at bottom, narrow at horizon point
+    const vanishX = W / 2, vanishY = H * 0.16;
+    const baseW  = W * 0.55, baseY = H * 0.82;
+
+    // Road fill (dark stone)
+    g.fillStyle(C.path0, 0.92);
+    g.fillPoints([
+      { x: vanishX - 4,          y: vanishY },
+      { x: vanishX + 4,          y: vanishY },
+      { x: W / 2 + baseW / 2,   y: baseY },
+      { x: W / 2 - baseW / 2,   y: baseY },
+    ], true);
+
+    // Road edge stripe
+    g.lineStyle(3, C.pathEdge, 0.8);
+    g.beginPath();
+    g.moveTo(vanishX - 4, vanishY);
+    g.lineTo(W / 2 - baseW / 2, baseY);
+    g.strokePath();
+    g.beginPath();
+    g.moveTo(vanishX + 4, vanishY);
+    g.lineTo(W / 2 + baseW / 2, baseY);
+    g.strokePath();
+
+    // Scrolling road lines (dashes)
+    const scroll = this.pathScroll % 40;
+    for (let prog = 0.05; prog < 1; prog += 0.12) {
+      const offs = (prog + scroll / 400) % 1;
+      if (offs < 0.05) continue;
+      const lx = vanishX, ly = vanishY + (baseY - vanishY) * offs;
+      const lw = 4 * offs;
+      g.fillStyle(C.pathGlow, 0.18 + offs * 0.12);
+      g.fillRect(lx - lw / 2, ly, lw, 3 * offs);
+    }
+
+    // Magical path glow strip (center)
+    g.fillStyle(0xffffff, 0.04);
+    g.fillPoints([
+      { x: vanishX - 2, y: vanishY },
+      { x: vanishX + 2, y: vanishY },
+      { x: W / 2 + 20,  y: baseY },
+      { x: W / 2 - 20,  y: baseY },
+    ], true);
+
+    // Side ground details
+    // Left side foliage
+    for (let i = 0; i < 5; i++) {
+      const prog = 0.15 + i * 0.16;
+      const lx = vanishX - 4 - (baseW / 2 + 20) * prog;
+      const ly = vanishY + (baseY - vanishY) * prog;
+      const sz = 10 * prog;
+      g.fillStyle(0x33bb55, 0.7 * prog);
+      g.fillCircle(lx, ly, sz);
+      g.fillStyle(0x44dd66, 0.4 * prog);
+      g.fillCircle(lx - sz * 0.3, ly - sz * 0.3, sz * 0.6);
+    }
+    // Right side foliage
+    for (let i = 0; i < 5; i++) {
+      const prog = 0.15 + i * 0.16;
+      const rx = vanishX + 4 + (baseW / 2 + 20) * prog;
+      const ly = vanishY + (baseY - vanishY) * prog;
+      const sz = 10 * prog;
+      g.fillStyle(0x33bb55, 0.7 * prog);
+      g.fillCircle(rx, ly, sz);
+      g.fillStyle(0x44dd66, 0.4 * prog);
+      g.fillCircle(rx + sz * 0.3, ly - sz * 0.3, sz * 0.6);
+    }
+  }
+
+  // ── Hero (3/4 top-down, bottom-center) ────────────────────────────
+  drawHero(swingAmt = 0, flash = false) {
+    const g = this.layerH; g.clear();
+    const fg = this.layerFX;
+    const x = this.hx, y = this.hy, t = this.tick;
+
+    if (flash) {
+      g.fillStyle(0xffffff, 0.9); g.fillCircle(x, y - 10, 30);
+      return;
+    }
+
+    // Aura glow
+    fg.clear();
+    const auraCol = this.blazeReady ? C.fire : this.shieldUp ? C.ice : C.heroGlow;
+    const auraA = 0.18 + 0.1 * Math.sin(t * 0.005);
+    fg.fillStyle(auraCol, auraA * 2); fg.fillCircle(x, y, 38);
+    fg.fillStyle(auraCol, auraA);     fg.fillCircle(x, y, 54);
+    // Shadow
+    fg.fillStyle(0x000000, 0.3); fg.fillEllipse(x, y + 22, 50, 12);
+
+    // Cloak/cape (behind body in 3/4 view, slightly below)
+    g.fillStyle(C.heroCloak);
+    g.fillEllipse(x, y + 4, 34, 22);
+
+    // Body armor (3/4 top-down shows top of head + torso)
+    g.fillStyle(C.heroBody);
+    g.fillEllipse(x, y - 4, 30, 22);
+    // Armor plate
+    g.fillStyle(0x4477ff);
+    g.fillEllipse(x, y - 2, 22, 16);
+    // Gold trim ring
+    g.lineStyle(2, C.heroTrim); g.strokeEllipse(x, y - 4, 30, 22);
+    // Center chest gem
+    g.fillStyle(0xaaddff); g.fillCircle(x, y - 4, 3.5);
+    g.fillStyle(0xffffff, 0.7); g.fillCircle(x - 1, y - 5, 1.5);
+
+    // Head (top-down view shows mostly top of helmet)
+    g.fillStyle(0x3355cc); g.fillCircle(x, y - 16, 11);
+    g.fillStyle(0x4477ff); g.fillCircle(x, y - 16, 8);
+    // White hair plume
+    g.fillStyle(C.heroHair);
+    g.fillEllipse(x, y - 23, 10, 6);
+    g.fillStyle(0xddddff, 0.8); g.fillEllipse(x, y - 24, 6, 4);
+    // Gold helmet rim
+    g.lineStyle(2, C.heroTrim); g.strokeCircle(x, y - 16, 11);
+
+    // Sword (right side, animated swing)
+    const sAng = -0.5 + swingAmt * 1.8;
+    const sx = x + Math.cos(sAng) * 22, sy = y - 10 + Math.sin(sAng) * 12;
+    const ex2 = x + Math.cos(sAng) * 10, ey2 = y - 10 + Math.sin(sAng) * 5;
+    // Glow
+    g.lineStyle(6, C.swordGlow, 0.4); g.lineBetween(ex2, ey2, sx, sy);
+    // Blade
+    g.lineStyle(2.5, C.sword);        g.lineBetween(ex2, ey2, sx, sy);
+    // Guard
+    const gAng = sAng + Math.PI / 2;
+    g.lineStyle(3, C.heroTrim);
+    g.lineBetween(ex2 + Math.cos(gAng)*5, ey2 + Math.sin(gAng)*5,
+                  ex2 - Math.cos(gAng)*5, ey2 - Math.sin(gAng)*5);
+
+    // Shield (left side)
+    g.fillStyle(0x2244aa); g.fillEllipse(x - 14, y - 2, 10, 12);
+    g.lineStyle(1.5, C.heroTrim); g.strokeEllipse(x - 14, y - 2, 10, 12);
+    g.fillStyle(C.heroTrim); g.fillCircle(x - 14, y - 2, 2.5);
+  }
+
+  // ── King Slime (3/4 top-down, upper center) ───────────────────────
+  drawEnemy(bob = 0) {
+    const g = this.layerE; g.clear();
+    if (this.eHP <= 0) return;
+    const x = this.ex, y = this.ey + bob, t = this.tick;
+    const hp = this.eHP / this.eMaxHP;
+    const pulse = 1 + 0.05 * Math.sin(t * 0.004);
+    const bw = 62 * pulse, bh = 48;
+
+    // Outer glow
+    g.fillStyle(C.slime, 0.12 * pulse); g.fillCircle(x, y, bw * 0.72);
+    g.fillStyle(C.slime, 0.06);         g.fillCircle(x, y, bw * 0.95);
+
+    // Shadow
+    g.fillStyle(0x000000, 0.28); g.fillEllipse(x, y + bh * 0.55, bw * 0.85, 14);
+
+    // Body layers
+    g.fillStyle(C.slimeD);  g.fillEllipse(x, y + 8, bw, bh + 6);
+    g.fillStyle(C.slime);   g.fillEllipse(x, y + 4, bw - 4, bh);
+    // Shine
+    g.fillStyle(C.slimeHL, 0.45); g.fillEllipse(x - bw * 0.2, y - bh * 0.2, bw * 0.35, bh * 0.28);
+    g.fillStyle(0xffffff, 0.22);  g.fillEllipse(x - bw * 0.25, y - bh * 0.28, bw * 0.15, bh * 0.12);
+
+    // Animated drip blobs
+    [-24, -10, 4, 18].forEach((dx, i) => {
+      const dp = Math.sin(t * 0.003 + i * 1.6) * 3;
+      g.fillStyle(C.slimeD); g.fillEllipse(x + dx, y + bh * 0.4 + dp, 12, 10);
+      g.fillStyle(C.slime);  g.fillEllipse(x + dx, y + bh * 0.38 + dp, 10, 8);
+    });
+
+    // Crown
+    g.fillStyle(0xaa8800); g.fillRect(x - 28, y - bh*0.44 - 10, 56, 12);
+    g.fillStyle(C.crown);  g.fillRect(x - 27, y - bh*0.44 - 12, 54, 12);
+    // Crown spikes
+    [[-22,-14],[-11,-20],[0,-16],[11,-20],[22,-14]].forEach(([sx, sh], i) => {
+      g.fillStyle(i % 2 === 0 ? 0xccaa00 : C.crown);
+      g.fillTriangle(x+sx-6, y-bh*0.44-12, x+sx+6, y-bh*0.44-12, x+sx, y-bh*0.44-12+sh);
+    });
+    // Crown gems
+    [[C.crownGem,-16],[C.ice,0],[C.crownGem,16]].forEach(([col,gx]) => {
+      g.fillStyle(col); g.fillRect(x+gx-3, y-bh*0.44-10, 6, 6);
+      g.fillStyle(0xffffff,0.55); g.fillRect(x+gx-2, y-bh*0.44-10, 3, 3);
+    });
+
+    // Eyes (3/4 top-down, looking slightly down-forward)
+    [-16, 16].forEach(ex => {
+      g.fillStyle(0xffffff);   g.fillEllipse(x+ex, y, 14, 11);
+      g.fillStyle(0x000000);   g.fillEllipse(x+ex+2, y+2, 7, 8);
+      g.fillStyle(0xffffff,0.7); g.fillRect(x+ex+1, y, 3, 3);
+    });
+    // Brow
+    g.lineStyle(2.5, 0x000000);
+    g.lineBetween(x-24, y-6, x-9, y-1);
+    g.lineBetween(x+9, y-1, x+24, y-6);
+
+    // Mouth (angry or normal based on hp)
+    if (hp < 0.5) {
+      g.fillStyle(0xffffff);
+      g.fillTriangle(x-9,y+14,x-4,y+14,x-6.5,y+20);
+      g.fillTriangle(x+4,y+14,x+9,y+14,x+6.5,y+20);
+    }
+    g.lineStyle(2.5, 0x003300);
+    g.beginPath(); g.arc(x, y+14, 11, 0.2, Math.PI-0.2, false); g.strokePath();
+
+    // HP pip bar above enemy
+    const pw = bw * 1.1, px = x - pw/2, py = y - bh/2 - 20;
+    g.fillStyle(0x000000, 0.7); g.fillRoundedRect(px, py, pw, 7, 3);
+    const hpCol = hp > 0.5 ? C.slime : hp > 0.25 ? 0xffaa00 : C.hp;
+    g.fillStyle(hpCol);        g.fillRoundedRect(px+1, py+1, (pw-2)*hp, 5, 2);
+    g.fillStyle(0xffffff,0.3); g.fillRoundedRect(px+1, py+1, (pw-2)*hp*0.5, 2, 1);
+    g.lineStyle(1, 0x000000, 0.5); g.strokeRoundedRect(px, py, pw, 7, 3);
+  }
+
+  // ── UI bars + dice panel ──────────────────────────────────────────
+  drawUI() {
+    const g = this.layerUI; g.clear();
+    const t = this.tick;
+
+    // ── Top panel ──────────────────────────────────────────────────
+    g.fillStyle(C.uiBg, 0.88); g.fillRoundedRect(6, 4, W-12, 44, 6);
+    g.lineStyle(2, C.uiBdr, 0.7); g.strokeRoundedRect(6, 4, W-12, 44, 6);
+
+    // HP bar
+    const hpW = W*0.42, hpX = 12, hpY = 10;
+    g.fillStyle(0x000000, 0.8); g.fillRoundedRect(hpX, hpY, hpW, 14, 5);
+    const hpFrac = Math.max(0, this.pHP / this.pMaxHP);
+    const pulse = hpFrac < 0.3 ? 0.5+0.5*Math.abs(Math.sin(t*0.008)) : 1;
+    g.fillStyle(C.hp, pulse);  g.fillRoundedRect(hpX+1, hpY+1, (hpW-2)*hpFrac, 12, 4);
+    g.fillStyle(0xffffff,0.25*pulse); g.fillRoundedRect(hpX+2, hpY+2, (hpW-2)*hpFrac*0.6, 4, 3);
+    g.lineStyle(1.5, C.hp, 0.5); g.strokeRoundedRect(hpX, hpY, hpW, 14, 5);
+    // Heart icon
+    g.fillStyle(C.hp); g.fillRect(hpX-1, hpY+16, 6, 6); g.fillRect(hpX-3, hpY+17, 10, 5);
+
+    this.hpNumTxt.setPosition(hpX + hpW/2, hpY + 7).setText(`${this.pHP}/${this.pMaxHP}`);
+
+    // XP bar
+    const xpX = 12, xpY = 28, xpW = W-24;
+    g.fillStyle(0x000000, 0.7); g.fillRoundedRect(xpX, xpY, xpW, 8, 4);
+    const xpFrac = Math.min(this.xp / this.xpNext, 1);
+    g.fillStyle(C.xp);         g.fillRoundedRect(xpX+1, xpY+1, (xpW-2)*xpFrac, 6, 3);
+    g.fillStyle(0xffffff, 0.35); g.fillRoundedRect(xpX+2, xpY+2, (xpW-2)*xpFrac*0.5, 2, 2);
+    g.lineStyle(1, C.xp, 0.4); g.strokeRoundedRect(xpX, xpY, xpW, 8, 4);
+
+    // Combo streak display
+    if (this.comboStreak > 1) {
+      const cx2 = W * 0.75, cy2 = 10;
+      const cc = C.comboColors[Math.min(this.comboStreak-1, C.comboColors.length-1)];
+      g.fillStyle(cc, 0.2); g.fillRoundedRect(cx2-24, cy2-4, 48, 20, 6);
+      g.lineStyle(1.5, cc, 0.8); g.strokeRoundedRect(cx2-24, cy2-4, 48, 20, 6);
+      if (!this._combotxt) {
+        this._combotxt = this.add.text(cx2, cy2+6, '', {
+          fontFamily:'Arial Black', fontSize:'10px', color:'#fff', stroke:'#000', strokeThickness:3,
+        }).setOrigin(0.5).setDepth(22);
+      }
+      this._combotxt.setText(`COMBO x${this.comboStreak}`).setVisible(true);
+      this._combotxt.setColor(Phaser.Display.Color.IntegerToColor(cc).rgba);
+    } else if (this._combotxt) { this._combotxt.setVisible(false); }
+
+    // ── Dice panel ────────────────────────────────────────────────
+    const dpY = H * 0.83, dpH = H * 0.1;
+    g.fillStyle(C.uiBg, 0.92); g.fillRoundedRect(6, dpY, W-12, dpH, 6);
+    g.lineStyle(2, C.uiBdr, 0.8); g.strokeRoundedRect(6, dpY, W-12, dpH, 6);
+    g.lineStyle(1, 0x9966ff, 0.25); g.strokeRoundedRect(10, dpY+3, W-20, dpH-6, 4);
+
+    // ── Bottom button bar ─────────────────────────────────────────
+    const bbY = H * 0.932, bbH = H * 0.065;
+    g.fillStyle(C.uiBg, 0.88); g.fillRoundedRect(6, bbY-2, W-12, bbH+4, 6);
+    g.lineStyle(1.5, C.uiBdr, 0.55); g.strokeRoundedRect(6, bbY-2, W-12, bbH+4, 6);
+  }
+
+  // ── Draw dice ─────────────────────────────────────────────────────
+  drawDice() {
+    const g = this.layerDice; g.clear();
+    const n = this.dice.count;
+    const dSize = 34;
+    const spacing = Math.min(dSize + 10, (W - 28) / n);
+    const startX = W/2 - (spacing*(n-1))/2;
+    const dy = H * 0.83 + H * 0.1 * 0.5 + 2;
+
+    for (let i = 0; i < n; i++) {
+      this.drawDie(g, startX + i*spacing, dy, this.dice.values[i], this.dice.elements[i], dSize);
+    }
+
+    const res = this.dice.evaluate();
+    const tierColors = ['#ffffff','#88ffcc','#ff9900','#ff5500','#ff2200','#ffdd00','#ff00ff'];
+    this.handTxt.setColor(tierColors[res.tier]).setText(`${res.name}  ×${res.mult}  →  ${res.damage}`);
+    this.rerollTxt.setText(`Rerolls: ${this.dice.rerolls}/${this.dice.maxRerolls}`);
+  }
+
+  drawDie(g, x, y, val, el, size) {
+    const s = size / 2;
+    const elCols = { none: null, fire: C.fire, ice: C.ice, poison: C.poison };
+    const ec = elCols[el];
+
+    // Outer elemental glow
+    if (ec) {
+      g.fillStyle(ec, 0.22); g.fillRoundedRect(x-s-6, y-s-6, size+12, size+12, 9);
+      g.fillStyle(ec, 0.10); g.fillRoundedRect(x-s-11,y-s-11,size+22,size+22, 12);
+    }
+
+    // Drop shadow
+    g.fillStyle(0x000000, 0.45); g.fillRoundedRect(x-s+3, y-s+3, size, size, 6);
+
+    // Die face
+    g.fillStyle(ec ? 0xfcfcff : 0xf2f2ff); g.fillRoundedRect(x-s, y-s, size, size, 6);
+    // Bevel light
+    g.fillStyle(0xffffff, 0.65); g.fillRoundedRect(x-s, y-s, size, 4, {tl:6,tr:6,bl:0,br:0});
+    g.fillStyle(0xffffff, 0.4);  g.fillRoundedRect(x-s, y-s, 4, size, {tl:6,tr:0,bl:6,br:0});
+    // Bevel dark
+    g.fillStyle(0x000000, 0.12); g.fillRoundedRect(x-s, y+s-4, size, 4, {tl:0,tr:0,bl:6,br:6});
+
+    // Border
+    g.lineStyle(ec ? 2.5 : 2, ec || 0x4455aa);
+    g.strokeRoundedRect(x-s, y-s, size, size, 6);
+
+    // Dots
+    const dr = size * 0.09;
+    const positions = {
+      1:[[0,0]], 2:[[-1,-1],[1,1]], 3:[[-1,-1],[0,0],[1,1]],
+      4:[[-1,-1],[1,-1],[-1,1],[1,1]], 5:[[-1,-1],[1,-1],[0,0],[-1,1],[1,1]],
+      6:[[-1,-1],[1,-1],[-1,0],[1,0],[-1,1],[1,1]],
+    }[val] || [[0,0]];
+    const pad = size * 0.26;
+    const dotCol = ec || 0x1a1a3a;
+    positions.forEach(([px, py]) => {
+      g.fillStyle(0x000000, 0.18); g.fillCircle(x+px*pad+1, y+py*pad+1, dr);
+      g.fillStyle(dotCol);         g.fillCircle(x+px*pad,   y+py*pad,   dr);
+      g.fillStyle(0xffffff, 0.5);  g.fillCircle(x+px*pad-dr*0.35, y+py*pad-dr*0.35, dr*0.38);
+    });
+
+    // Elemental badge corner
+    if (el === 'fire') {
+      g.fillStyle(C.fire); g.fillTriangle(x+s-9,y+s, x+s,y+s, x+s,y+s-9);
+      g.fillStyle(0xffff00,0.7); g.fillTriangle(x+s-6,y+s, x+s,y+s, x+s,y+s-6);
+    } else if (el === 'ice') {
+      g.fillStyle(C.ice, 0.9); g.fillRect(x+s-8, y-s, 8, 8);
+      g.fillStyle(0xffffff, 0.6); g.fillRect(x+s-6, y-s+2, 4, 4);
+    } else if (el === 'poison') {
+      g.fillStyle(C.poison, 0.9); g.fillCircle(x+s-4, y-s+4, 5);
+      g.fillStyle(0xffffff, 0.5); g.fillCircle(x+s-5, y-s+3, 2);
+    }
+  }
+
+  // ── Level-up panel ────────────────────────────────────────────────
+  buildLevelPanel() {
+    this.lvlCon = this.add.container(0,0).setDepth(100).setVisible(false);
+    const ov = this.add.graphics();
+    ov.fillStyle(0x000000, 0.8); ov.fillRect(0,0,W,H);
+    this.lvlCon.add(ov);
+
+    this.lvlTitle = this.add.text(W/2, H*0.14, '✦ LEVEL UP ✦', {
+      fontFamily:'Arial Black', fontSize:'22px', color:'#ffd700', stroke:'#220044', strokeThickness:6,
+    }).setOrigin(0.5);
+    this.lvlCon.add(this.lvlTitle);
+
+    this.lvlSub = this.add.text(W/2, H*0.22, 'Choose one upgrade', {
+      fontFamily:'Arial Black', fontSize:'11px', color:'#cc99ff', stroke:'#000', strokeThickness:2,
+    }).setOrigin(0.5);
+    this.lvlCon.add(this.lvlSub);
+
+    this.lvlCards = [0,1,2].map(() => {
+      const g = this.add.graphics(); this.lvlCon.add(g);
+      const t = this.add.text(0,0,'',{fontFamily:'Arial Black',fontSize:'9px',color:'#fff',stroke:'#000',strokeThickness:2,align:'center',wordWrap:{width:70}}).setOrigin(0.5);
+      this.lvlCon.add(t);
+      const badge = this.add.text(0,0,'',{fontFamily:'Arial Black',fontSize:'7px',color:'#000',stroke:'#ffaa00',strokeThickness:1}).setOrigin(0.5);
+      this.lvlCon.add(badge);
+      return { g, t, badge };
+    });
+    this.lvlZones = [];
+  }
+
+  showLevelUp() {
+    this.lvlUp = true;
+    this.lvlZones.forEach(z => z.destroy()); this.lvlZones = [];
+    const ups = this.genUpgrades();
+    const cW = 88, cH = 120, cY = H * 0.54;
+    const xs = [W*0.18, W*0.5, W*0.82];
+
+    ups.forEach((u, i) => {
+      const { g, t, badge } = this.lvlCards[i];
+      const x = xs[i]; g.clear();
+      // Shadow
+      g.fillStyle(0x000000, 0.6); g.fillRoundedRect(x-cW/2+4, cY-cH/2+4, cW, cH, 10);
+      // Card
+      g.fillStyle(u.bg); g.fillRoundedRect(x-cW/2, cY-cH/2, cW, cH, 10);
+      g.fillStyle(0xffffff, 0.14); g.fillRoundedRect(x-cW/2+5, cY-cH/2+5, cW-10, cH*0.45, 7);
+      g.lineStyle(2.5, u.iconCol, 0.95); g.strokeRoundedRect(x-cW/2, cY-cH/2, cW, cH, 10);
+      // Icon circle
+      g.fillStyle(0x000000, 0.35); g.fillCircle(x, cY-28, 18);
+      g.fillStyle(u.iconCol, 0.95); g.fillCircle(x, cY-28, 16);
+      g.fillStyle(0xffffff, 0.3);   g.fillCircle(x-5, cY-33, 7);
+
+      t.setPosition(x, cY+10).setText(`${u.name}\n${u.desc}`);
+      if (u.type === 'ability') {
+        g.fillStyle(C.gold, 0.9); g.fillRoundedRect(x-22, cY+cH/2-14, 44, 12, 5);
+        badge.setPosition(x, cY+cH/2-8).setText('ACTIVE').setVisible(true);
+      } else { badge.setVisible(false); }
+
+      const zone = this.add.zone(x-cW/2, cY-cH/2, cW, cH).setOrigin(0).setDepth(101).setInteractive();
+      zone.on('pointerdown', () => this.pickUpgrade(u));
+      zone.on('pointerover',  () => { g.lineStyle(3, C.gold, 1); g.strokeRoundedRect(x-cW/2, cY-cH/2, cW, cH, 10); });
+      zone.on('pointerout',   () => { g.lineStyle(2.5, u.iconCol, 0.95); g.strokeRoundedRect(x-cW/2, cY-cH/2, cW, cH, 10); });
+      this.lvlZones.push(zone);
+    });
+
+    this.lvlCon.setVisible(true);
+    this.tweens.add({ targets:this.lvlTitle, scaleX:1.1, scaleY:1.1, yoyo:true, repeat:-1, duration:650 });
+  }
+
+  genUpgrades() {
+    const pool = [
+      { name:'Extra Die',    desc:'Add one die\nto your pool',   type:'passive', bg:0x0d1a55, iconCol:0x6699ff, apply:()=>this.dice.addDie() },
+      { name:'Fire Infuse',  desc:'+40% fire\ndamage',           type:'passive', bg:0x440d00, iconCol:C.fire,   apply:()=>this.dice.infuse('fire') },
+      { name:'Ice Infuse',   desc:'+20% ice\ndamage',            type:'passive', bg:0x001a33, iconCol:C.ice,    apply:()=>this.dice.infuse('ice') },
+      { name:'Venom Dice',   desc:'+30% toxic\ndamage',          type:'passive', bg:0x0d3300, iconCol:C.poison, apply:()=>this.dice.infuse('poison') },
+      { name:'Reroll+',      desc:'Gain +1\nreroll per turn',    type:'passive', bg:0x220044, iconCol:0xcc88ff, apply:()=>this.dice.addReroll() },
+      { name:'Fortitude',    desc:'+30 Max HP\n& heal',          type:'passive', bg:0x440011, iconCol:C.hp,     apply:()=>{ this.pMaxHP+=30; this.pHP=Math.min(this.pHP+30,this.pMaxHP); } },
+      { name:'Swift Blade',  desc:'Attack speed\n+25%',          type:'passive', bg:0x333300, iconCol:C.gold,   apply:()=>{ this.autoDelay=Math.max(700,this.autoDelay*0.75); } },
+      { name:'Blaze Strike', desc:'Next attack\n×3 damage',      type:'ability', bg:0x550d00, iconCol:C.fire,   apply:()=>{ this.blazeReady=true; this.spawnPop(this.hx,this.hy-40,'BLAZE!','#ff6622',1.4); } },
+      { name:'Iron Shield',  desc:'Block the\nnext hit',         type:'ability', bg:0x001122, iconCol:C.ice,    apply:()=>{ this.shieldUp=true;   this.spawnPop(this.hx,this.hy-40,'SHIELD!','#99ddff',1.2); } },
+      { name:'Mend',         desc:'Restore\n25% max HP',         type:'ability', bg:0x003311, iconCol:0x55ff88, apply:()=>{ const a=Math.round(this.pMaxHP*0.25); this.pHP=Math.min(this.pMaxHP,this.pHP+a); this.spawnPop(this.hx,this.hy-40,`+${a} HP`,'#55ff88',1.2); } },
+    ];
+    const filtered = pool.filter(u => !(u.name==='Extra Die' && this.dice.count>=5));
+    Phaser.Utils.Array.Shuffle(filtered);
+    return filtered.slice(0, 3);
+  }
+
+  pickUpgrade(u) {
+    u.apply();
+    this.dice.roll(); this.dice.resetRerolls();
+    this.lvlCon.setVisible(false);
+    this.lvlUp = false;
+    this.tweens.killTweensOf(this.lvlTitle);
+    this.lvlTitle.setScale(1);
+    this.lvlZones.forEach(z => z.destroy()); this.lvlZones = [];
+    this.burst(W/2, H/2, C.gold, 24);
+  }
+
+  // ── Combat ────────────────────────────────────────────────────────
+  onAttack() {
+    if (this.lvlUp || this.busy || this.eHP <= 0) return;
+    this.autoTimer = 0; this.doAttack();
+  }
+
+  onReroll() {
+    if (this.lvlUp || this.busy) return;
+    if (this.dice.rerolls <= 0) { this.spawnPop(W/2, H*0.83, 'No rerolls!', '#ff6644'); return; }
+    this.dice.reroll();
+  }
+
+  doAttack() {
+    this.busy = true;
+    const res = this.dice.evaluate();
+    let dmg = res.damage;
+    let blazed = false;
+
+    if (this.blazeReady) { dmg *= 3; this.blazeReady = false; blazed = true; }
+
+    // Combo streak
+    if (res.tier >= 1) {
+      this.comboStreak++;
+      this.comboTimer = 3000;
+      dmg = Math.round(dmg * (1 + (this.comboStreak - 1) * 0.15));
+    } else {
+      this.comboStreak = 0;
+    }
+
+    // Hero swing
+    this.tweens.add({
+      targets:{v:0}, v:1, duration:160, yoyo:true, repeat:2,
+      onUpdate:(tw,o)=>this.drawHero(o.v),
+    });
+
+    if (res.tier >= 3) this.cameras.main.shake(260, 0.008 * res.tier);
+    if (blazed)        this.cameras.main.flash(200,255,100,0,false);
+
+    this.time.delayedCall(200, () => {
+      // Hit flash on enemy
+      this.tweens.add({
+        targets:{v:0},v:1,duration:70,yoyo:true,repeat:5,
+        onUpdate:(_,o)=>this.layerE.setAlpha(o.v<0.5?0.25:1),
+        onComplete:()=>this.layerE.setAlpha(1),
+      });
+
+      if (res.tier >= 4) this.cameras.main.flash(150,255,180,0,false);
+      else if (res.tier >= 2) this.cameras.main.flash(80,200,255,100,false);
+
+      this.eHP = Math.max(0, this.eHP - dmg);
+
+      // Combo popup
+      const popCol = C.comboColors[Math.min(res.tier, C.comboColors.length-1)];
+      const hexCol = '#' + popCol.toString(16).padStart(6,'0');
+      if (res.tier >= 2) {
+        this.spawnPop(this.ex, this.ey - 40, `${res.name}!\n×${res.mult}`, hexCol, 1.8);
+        this.burst(this.ex, this.ey, popCol, 18);
+      } else {
+        this.spawnPop(this.ex, this.ey - 28, String(dmg), hexCol, 1.2);
+      }
+      if (this.comboStreak > 1) {
+        this.spawnPop(this.ex + 30, this.ey - 20, `COMBO\n×${this.comboStreak}`, '#ffdd00', 1.1);
+      }
+
+      if (this.eHP <= 0) {
+        this.time.delayedCall(450, () => this.onKill());
+      } else {
+        this.time.delayedCall(420, () => {
+          if (this.shieldUp) {
+            this.shieldUp = false;
+            this.cameras.main.flash(120,80,180,255,false);
+            this.spawnPop(this.hx, this.hy-40,'BLOCKED!','#88ccff',1.3);
+          } else {
+            const edg = Phaser.Math.Between(5 + this.wave, 12 + this.wave * 2);
+            this.pHP = Math.max(0, this.pHP - edg);
+            this.cameras.main.flash(100,255,0,0,false);
+            this.spawnPop(this.hx, this.hy-40, `-${edg}`, '#ff3344', 1.1);
+            if (this.pHP <= 0) this.onDeath();
+          }
+        });
+      }
+
+      this.dice.roll(); this.dice.resetRerolls();
+      this.busy = false;
+    });
+  }
+
+  onKill() {
+    this.burst(this.ex, this.ey, C.slime, 28);
+    this.burst(this.ex, this.ey, C.gold, 14);
+    this.cameras.main.flash(200,80,255,80,false);
+    this.layerE.clear();
+    this.comboStreak = 0;
+
+    const xpG = 14 + this.wave * 3;
+    this.xp += xpG;
+    this.spawnPop(this.ex, this.ey, `+${xpG} XP`, '#33aaff', 1.3);
+
+    if (this.xp >= this.xpNext) {
+      this.xp -= this.xpNext;
+      this.xpNext = Math.round(this.xpNext * 1.45);
+      this.level++;
+      this.levelTxt.setText(`LV ${this.level}`);
+      this.time.delayedCall(750, () => this.showLevelUp());
+    } else {
+      this.time.delayedCall(1000, () => this.nextWave());
+    }
+  }
+
+  onDeath() {
+    this.busy = true;
+    this.cameras.main.shake(600, 0.022);
+    this.cameras.main.flash(300, 255, 0, 0, false);
+    this.time.delayedCall(800, () => {
+      const ov = this.add.graphics().setDepth(200);
+      ov.fillStyle(0x000000, 0.78); ov.fillRect(0,0,W,H);
+      this.add.text(W/2,H*0.38,'GAME OVER',{fontFamily:'Arial Black',fontSize:'32px',color:'#ff3344',stroke:'#000',strokeThickness:7}).setOrigin(0.5).setDepth(201);
+      this.add.text(W/2,H*0.5,`Wave ${this.wave}  |  LV ${this.level}`,{fontFamily:'Arial Black',fontSize:'14px',color:'#ccaaff',stroke:'#000',strokeThickness:4}).setOrigin(0.5).setDepth(201);
+      const rt=this.add.text(W/2,H*0.6,'[ TAP TO RESTART ]',{fontFamily:'Arial Black',fontSize:'12px',color:'#ffd700',stroke:'#000',strokeThickness:3}).setOrigin(0.5).setDepth(201).setInteractive();
+      rt.on('pointerdown',()=>this.scene.restart());
+      this.tweens.add({targets:rt,alpha:0.35,yoyo:true,repeat:-1,duration:600});
+    });
+  }
+
+  nextWave() {
+    this.wave++;
+    this.waveTxt.setText(`WAVE ${this.wave}`);
+    this.eMaxHP = 80 + this.wave * 28;
+    this.eHP = this.eMaxHP;
+    this.spawnPop(W/2, H*0.35, `WAVE ${this.wave}`, '#ffd700', 2.0);
+    this.pathScroll += 80;
+  }
+
+  // ── FX helpers ────────────────────────────────────────────────────
+  spawnPop(x, y, text, color='#fff', scale=1) {
+    const t = this.add.text(x, y, text, {
+      fontFamily:'Arial Black', fontSize:`${Math.round(14*scale)}px`,
+      color, stroke:'#000000', strokeThickness:Math.ceil(4*scale), align:'center',
+    }).setOrigin(0.5,1).setDepth(80);
+    if (scale > 1.5) this.tweens.add({targets:t,scaleX:1.12,scaleY:1.12,yoyo:true,duration:120});
+    this.tweens.add({targets:t,y:y-50,alpha:0,duration:1100,ease:'Cubic.easeOut',onComplete:()=>t.destroy()});
+  }
+
+  burst(x, y, color, count) {
+    const g = this.add.graphics().setDepth(75);
+    const ps = Array.from({length:count},()=>({
+      x, y, vx:(Math.random()-0.5)*220, vy:(Math.random()-0.5)*220-60, life:1,
+    }));
+    this.time.addEvent({delay:16,repeat:38,callback:()=>{
+      g.clear();
+      ps.forEach(p=>{
+        p.x+=p.vx*0.016; p.y+=p.vy*0.016; p.vy+=210*0.016; p.life-=0.026;
+        if(p.life>0){ g.fillStyle(color,p.life); g.fillRect(p.x,p.y,Math.max(2,5*p.life),Math.max(2,5*p.life)); }
+      });
+    }});
+    this.time.delayedCall(700,()=>g.destroy());
+  }
+
+  // ── Update ────────────────────────────────────────────────────────
+  update(time, delta) {
+    this.tick = time;
+    if (this.lvlUp) return;
+
+    this.pathScroll += delta * 0.03;
+
+    // Combo timer decay
+    if (this.comboStreak > 0) {
+      this.comboTimer -= delta;
+      if (this.comboTimer <= 0) this.comboStreak = 0;
+    }
+
+    this.drawBG();
+    this.drawPath();
+    this.drawUI();
+    this.drawDice();
+    this.drawHero(0);
+    this.drawEnemy(Math.sin(time / 620) * 5);
+
+    // Auto-attack
+    if (!this.busy && this.eHP > 0 && !this.lvlUp) {
+      this.autoTimer += delta;
+      if (this.autoTimer >= this.autoDelay) { this.autoTimer = 0; this.doAttack(); }
+    }
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: W, height: H,
+  backgroundColor: '#000000',
+  antialias: true,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: W, height: H,
+  },
+  scene: [GameScene],
+});
+</script>
+</body>
+</html>
