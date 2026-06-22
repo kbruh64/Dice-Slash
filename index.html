@@ -9,29 +9,28 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#07131d; display:flex; justify-content:center; align-items:center;
        height:100vh; overflow:hidden; }
-canvas { display:block; image-rendering:auto; }
+canvas { display:block; image-rendering:pixelated; }
 </style>
 </head>
 <body>
 <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.2/dist/pixi.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════════
-//  DICE SLASH  —  Balatro × Dice × Roguelike
-//  Engine: PixiJS 7   Art: Hand-crafted pixel sprites (PX=3)
+//  DICE SLASH — Turn-based dice roguelike
+//  Canvas: 1080×1920 (4K portrait). Design coords: 390×680.
 // ═══════════════════════════════════════════════════════════════════════════════
-const W=390, H=680, PX=3;
+
+// Design-space dimensions (all coordinates use these)
+const W=390, H=680, PX=4;
+// Canvas dimensions (larger = sharper on high-DPI / 4K screens)
+const CW=1080, CH=1920;
 const FONT='"Press Start 2P",monospace';
+
 const SETTINGS={
   difficulty:'normal',
-  shake:true,
-  flash:true,
-  damageText:true,
-  fastAnims:false,
-  reduceMotion:false,
-  largeDice:false,
-  highContrast:false,
-  autoSort:false,
-  confirmRestart:true,
+  shake:true, flash:true, damageText:true,
+  fastAnims:false, reduceMotion:false,
+  largeDice:false, highContrast:false, autoSort:false,
 };
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -48,14 +47,12 @@ const C={
   fire:0xff6600, ice:0x44ddff, poison:0x44ff88,
 };
 
-// ── Easing ────────────────────────────────────────────────────────────────────
 const easeOut  = t => 1-(1-t)**2;
 const easeIn   = t => t*t;
 const easeBack = t => 2.7*t*t*t - 1.7*t*t;
 const easeBounce= t => Math.abs(Math.sin(t*Math.PI));
 
-// ── Animation helpers ─────────────────────────────────────────────────────────
-function anim(dur, onFrame, onDone) {
+function anim(dur, onFrame, onDone){
   dur=Math.max(1,dur*(SETTINGS.reduceMotion?0.35:SETTINGS.fastAnims?0.65:1));
   let elapsed=0;
   const tick=()=>{
@@ -68,61 +65,58 @@ function anim(dur, onFrame, onDone) {
   return ()=>app.ticker.remove(tick);
 }
 function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
-async function seq(steps){ for(const s of steps) await s(); }
 function lerp(a,b,t){ return a+(b-a)*t; }
 
-// ── Pixel-art sprite data ─────────────────────────────────────────────────────
-// Each char = 1 sprite pixel (PX×PX screen pixels). '.' = transparent.
-// Palette keys live in spr.pal.
-
+// ── Sprite art ────────────────────────────────────────────────────────────────
 function normArt(art){
   const mw=Math.max(...art.map(r=>r.length));
   return art.map(r=>r.padEnd(mw,'.'));
 }
 
-// ── Hero knight (16w × 18h) ───────────────────────────────────────────────────
 const SPR_HERO={
   w:16,h:18,
   pal:{
-    H:0xffffff, h:0xccccee,                    // hair white
-    B:0x4488ff, b:0x2255dd, D:0x0f33aa,        // armor blue
-    G:0xffd700, g:0xcc9900, x:0x886600,        // gold
-    S:0xf5deb3, E:0x99eeff,                    // skin, eye glow
-    A:0x5599ff,                                // armor mid
-    P:0xee55ff, p:0xaa22cc, q:0x660088,        // purple cloak
-    L:0x223377, l:0x334499,                    // legs
-    F:0x111133, f:0x222255,                    // boots
-    W:0xddeeff, w:0xaabbdd,                    // sword
-    O:0xff8800,                                // orange trim
+    P:0xff2222, p:0xaa1111,
+    H:0xc5d5e5, h:0x7a8e9e,
+    E:0xffc400,
+    G:0xffcc00, g:0xcc9900,
+    B:0x2255cc, b:0x0f3099,
+    A:0x4488ff,
+    S:0xe5f5ff, s:0x99b0cc,
+    L:0x163a88, l:0x0d2455,
+    F:0x0e1c33, f:0x080e1a,
   },
   art: normArt([
-    '....HHHHHHHHH...',
-    '...HHHHHHHHHHh..',
-    '...HhBBBBBBhH...',
-    '...BSSeeSBBb....',
-    '...BGGGGGGGb....',
-    '...BBBBBBBBb....',
-    '..gBBAAAAAbBgx..',
-    '..PBAAAAAbBBpP..',
-    '..PBAAAAAbBBpP..',
-    '..PBLLLLLbBBpP.',
-    '...lLllLlLll....',
-    '...lLLLLLLll....',
-    '..FflLlLlLfF....',
-    '..FFFfFFfFFF....',
+    '....PPp.........',
+    '...PPPP.........',
+    '....HHHH........',
+    '...HHhHHHH......',
+    '...HHgEEgHH.....',
+    '...HHHgggHH.....',
+    '..gGGGGGGGg.....',
+    '.SBBBAAAABBb....',
+    'ssBAAAAAAAAb....',
+    '.sBAAAAAAAAb....',
+    '..bBLLLLLBb.....',
+    '..bBLLLLLBb.....',
+    '..bBllllLBb.....',
+    '..bBllllLBb.....',
+    '..bFFFFFFFb.....',
+    '..FFfffffFf.....',
+    '..Fffffff.f.....',
+    '...fffffff......',
   ]),
 };
 
-// ── King Slime boss (22w × 18h) ───────────────────────────────────────────────
 const SPR_SLIME={
   w:22,h:18,
   pal:{
-    G:0xffd700, g:0xcc9900, x:0xaa7700,       // crown gold
-    R:0xff3355, B:0x3388ff, V:0xaa44ff,       // crown gems
-    s:0x55ee33, S:0x99ff66, d:0x33bb11,       // slime green
-    D:0x22881f, w:0xccffaa,                   // slime dark/highlight
-    E:0xffffff, p:0x000000,                   // eyes
-    o:0x003311,                               // mouth
+    G:0xffd700, g:0xcc9900, x:0xaa7700,
+    R:0xff3355, B:0x3388ff, V:0xaa44ff,
+    s:0x55ee33, S:0x99ff66, d:0x33bb11,
+    D:0x22881f, w:0xccffaa,
+    E:0xffffff, p:0x000000,
+    o:0x003311,
   },
   art: normArt([
     '.....GGGGGGGGGGGG.....',
@@ -146,7 +140,6 @@ const SPR_SLIME={
   ]),
 };
 
-// ── Ability icon sprites (12w × 12h) ──────────────────────────────────────────
 const ABILITY_ICONS={
   blaze:{w:12,h:12,pal:{f:0xff6600,F:0xff9900,y:0xffff00,r:0xff2200},art:normArt([
     '....ff......','...fff......','..ffFf......','..fFFf......',
@@ -172,28 +165,38 @@ const ABILITY_ICONS={
 
 // ── PixiJS setup ──────────────────────────────────────────────────────────────
 const app=new PIXI.Application({
-  width:W, height:H,
+  width:CW, height:CH,
   backgroundColor:C.bg,
-  antialias:true, roundPixels:false, autoDensity:true,
-  resolution:Math.min(3,window.devicePixelRatio||2),
+  antialias:false, roundPixels:true, autoDensity:true,
+  resolution:window.devicePixelRatio||2,
 });
 document.body.appendChild(app.view);
+
 function fitCanvas(){
-  const sc=Math.min(innerWidth/W,innerHeight/H);
-  app.view.style.width=`${Math.floor(W*sc)}px`;
-  app.view.style.height=`${Math.floor(H*sc)}px`;
+  const sc=Math.min(innerWidth/CW, innerHeight/CH);
+  app.view.style.width=`${Math.floor(CW*sc)}px`;
+  app.view.style.height=`${Math.floor(CH*sc)}px`;
 }
 fitCanvas(); window.addEventListener('resize',fitCanvas);
 
-// Layers (depth order)
-const Lbg  =new PIXI.Container(); app.stage.addChild(Lbg);
-const Lworld=new PIXI.Container(); app.stage.addChild(Lworld);
-const Lfx   =new PIXI.Container(); app.stage.addChild(Lfx);
-const Lhero =new PIXI.Container(); app.stage.addChild(Lhero);
-const Ldice =new PIXI.Container(); app.stage.addChild(Ldice);
-const Lui   =new PIXI.Container(); app.stage.addChild(Lui);
-const Lpopup=new PIXI.Container(); app.stage.addChild(Lpopup);
-const Lover =new PIXI.Container(); app.stage.addChild(Lover);
+// Design container: maps W×H design space to CW×CH canvas
+const designScale = CW/W; // 1080/390 ≈ 2.769
+const designOffX = 0;
+const designOffY = (CH - H*designScale)/2; // center vertically
+const design=new PIXI.Container();
+design.scale.set(designScale);
+design.position.set(designOffX, designOffY);
+app.stage.addChild(design);
+
+// Layers
+const Lbg   =new PIXI.Container(); design.addChild(Lbg);
+const Lworld=new PIXI.Container(); design.addChild(Lworld);
+const Lfx   =new PIXI.Container(); design.addChild(Lfx);
+const Lhero =new PIXI.Container(); design.addChild(Lhero);
+const Ldice =new PIXI.Container(); design.addChild(Ldice);
+const Lui   =new PIXI.Container(); design.addChild(Lui);
+const Lpopup=new PIXI.Container(); design.addChild(Lpopup);
+const Lover =new PIXI.Container(); design.addChild(Lover);
 
 // ── Sprite baking ─────────────────────────────────────────────────────────────
 function bakeSprite(spr, px=PX){
@@ -208,17 +211,16 @@ function bakeSprite(spr, px=PX){
   app.renderer.render(g,{renderTexture:rt});
   return rt;
 }
-function bakeIcon(spr){return bakeSprite(spr,2);}
+function bakeIcon(spr){return bakeSprite(spr,3);}
 
-// Pre-baked textures
 const TEX={};
 function bakeAll(){
-  TEX.hero  =bakeSprite(SPR_HERO);
-  TEX.slime =bakeSprite(SPR_SLIME);
-  TEX.blaze  =bakeIcon(ABILITY_ICONS.blaze);
-  TEX.thunder=bakeIcon(ABILITY_ICONS.thunder);
-  TEX.frost  =bakeIcon(ABILITY_ICONS.frost);
-  TEX.deathspin=bakeIcon(ABILITY_ICONS.deathspin);
+  TEX.hero      =bakeSprite(SPR_HERO);
+  TEX.slime     =bakeSprite(SPR_SLIME);
+  TEX.blaze     =bakeIcon(ABILITY_ICONS.blaze);
+  TEX.thunder   =bakeIcon(ABILITY_ICONS.thunder);
+  TEX.frost     =bakeIcon(ABILITY_ICONS.frost);
+  TEX.deathspin =bakeIcon(ABILITY_ICONS.deathspin);
 }
 
 // ── Hand definitions ──────────────────────────────────────────────────────────
@@ -232,7 +234,7 @@ const HANDS=[
   {name:'FIVE OF A KIND',  chips:60, mult:20},
 ];
 const HAND_COLS=[C.white,C.green,C.blue,C.blue,C.purple,C.orange,C.gold];
-const HAND_ANIM=['base','base','mid','mid','high','mega','ULTRA'];
+
 const UI={
   diceY:492,
   scoreY:288,
@@ -240,7 +242,6 @@ const UI={
   controlsY:H-36,
 };
 
-// Dot positions for dice faces
 const DOTS={
   1:[[0,0]],
   2:[[-1,-1],[1,1]],
@@ -251,35 +252,35 @@ const DOTS={
 };
 const EL_COL={none:null,fire:C.fire,ice:C.ice,poison:C.poison};
 
-// ── Game state ─────────────────────────────────────────────────────────────────
+// ── Game state ────────────────────────────────────────────────────────────────
 let G={};
 function newGame(){
   G={
     wave:1, ante:1,
-    pHP:60, pMaxHP:60,
-    eHP:0,  eMaxHP:0,
-    xp:0, xpNext:60,
+    pHP:80, pMaxHP:80,
+    eHP:0, eMaxHP:0,
+    xp:0, xpNext:80,
     level:0,
-    // abilities unlocked at xp levels
     abilities:[
-      {id:'blaze',   name:'Blaze Rush',  desc:'deal 60 dmg\nmult x2 next',xpReq:60,  cd:0,maxCD:0,ready:false,unlocked:false},
-      {id:'thunder', name:'Thunder God', desc:'lightning\n30% enemy HP',  xpReq:140, cd:0,maxCD:0,ready:false,unlocked:false},
-      {id:'frost',   name:'Frost Prison',desc:'freeze dice\nmult x3',     xpReq:260, cd:0,maxCD:0,ready:false,unlocked:false},
-      {id:'deathspin',name:'Death Spin', desc:'reroll all\n3x keep best', xpReq:440, cd:0,maxCD:0,ready:false,unlocked:false},
+      {id:'blaze',    name:'Blaze Rush',   desc:'60 dmg\nmult x2 next',  xpReq:80,  ready:false, unlocked:false},
+      {id:'thunder',  name:'Thunder God',  desc:'lightning\n30% HP',     xpReq:180, ready:false, unlocked:false},
+      {id:'frost',    name:'Frost Prison', desc:'freeze dice\nmult x3',  xpReq:320, ready:false, unlocked:false},
+      {id:'deathspin',name:'Death Spin',   desc:'reroll all\nkeep best', xpReq:520, ready:false, unlocked:false},
     ],
     blazeNextMult:1,
     dice:[],
     diceCount:5,
-    handsLeft:4, discardsLeft:3,
+    discardsLeft:3,
     jokers:[],
     combo:0,
     block:0,
     focus:0,
     enemyShield:0,
     intent:null,
-    phase:'roll',   // roll | attacking | levelup | dead
+    phase:'roll',
     busy:false,
     tick:0,
+    playerTurn:true,
   };
   spawnEnemy();
   freshRoll();
@@ -287,7 +288,7 @@ function newGame(){
 
 function spawnEnemy(){
   const diff=SETTINGS.difficulty==='chill'?0.82:SETTINGS.difficulty==='brutal'?1.18:1;
-  G.eMaxHP=Math.round((80+G.wave*50)*diff);
+  G.eMaxHP=Math.round((90+G.wave*55)*diff);
   G.eHP=G.eMaxHP;
   G.enemyShield=0;
   G.intent=makeEnemyIntent();
@@ -295,33 +296,28 @@ function spawnEnemy(){
 
 function makeEnemyIntent(){
   const diff=SETTINGS.difficulty==='chill'?0.8:SETTINGS.difficulty==='brutal'?1.25:1;
-  const base=Math.round((7+G.wave*3)*diff);
+  const base=Math.round((8+G.wave*3)*diff);
   const r=Math.random();
-  if(r<0.48) return {type:'strike',name:'STRIKE',dmg:base,desc:`-${base} HP`};
-  if(r<0.72) return {type:'heavy',name:'HEAVY',dmg:base+7,desc:`-${base+7} HP`};
-  if(r<0.88) return {type:'guard',name:'GUARD',dmg:0,desc:'+25 SHIELD'};
-  return {type:'curse',name:'CURSE',dmg:Math.max(4,base-3),desc:'WEAKEN DICE'};
+  if(r<0.48) return {type:'strike',name:'STRIKE',dmg:base,      desc:`-${base} HP`};
+  if(r<0.72) return {type:'heavy', name:'HEAVY', dmg:base+8,    desc:`-${base+8} HP`};
+  if(r<0.88) return {type:'guard', name:'GUARD', dmg:0,         desc:'+30 SHIELD'};
+  return           {type:'curse', name:'CURSE', dmg:Math.max(4,base-3), desc:'WEAKEN DICE'};
 }
 
 function freshRoll(){
-  G.dice=Array.from({length:G.diceCount},(_, i)=>({
+  G.dice=Array.from({length:G.diceCount},(_,i)=>({
     value:Math.ceil(Math.random()*6),
     held:false,
     el:G.dice[i]?.el||'none',
     vy:-60,
   }));
-  if(SETTINGS.autoSort) sortDice();
+  if(SETTINGS.autoSort) G.dice.sort((a,b)=>a.value-b.value);
 }
 
 function rollUnheld(){
   G.dice.forEach(d=>{
     if(!d.held){ d.value=Math.ceil(Math.random()*6); d.vy=-50; }
   });
-  if(SETTINGS.autoSort) sortDice();
-}
-
-function sortDice(){
-  G.dice.sort((a,b)=>a.value-b.value || (a.el||'').localeCompare(b.el||''));
 }
 
 function evalHand(dice){
@@ -341,7 +337,6 @@ function evalHand(dice){
     if(d.el==='ice')   em+=0.2;
     if(d.el==='poison')em+=0.3;
   });
-  // Joker bonuses
   let jChips=0, jMult=0;
   G.jokers.forEach(j=>{
     if(j.type==='chips') jChips+=j.val;
@@ -353,24 +348,20 @@ function evalHand(dice){
   return {tier:h,hand,chips,mult,score:chips*mult};
 }
 
-// ── XP & Ability system ────────────────────────────────────────────────────────
+// ── XP & Ability unlock ───────────────────────────────────────────────────────
 function addXP(amount){
   G.xp+=amount;
   G.abilities.forEach(ab=>{
     if(!ab.unlocked && G.xp>=ab.xpReq){
       ab.unlocked=true; ab.ready=true;
-      abilityUnlockEffect(ab);
+      bigPopup(`${ab.name}\nUNLOCKED!`,C.gold,1.6);
+      screenFlash(C.gold,300);
+      burst(W/2,H*0.5,C.gold,30);
     }
   });
 }
 
-function abilityUnlockEffect(ab){
-  bigPopup(`${ab.name}\nUNLOCKED!`,C.gold,1.6);
-  screenFlash(C.gold,300);
-  burst(W/2,H*0.5,C.gold,30);
-}
-
-// ── World objects (hero & enemy as PIXI.Sprites) ──────────────────────────────
+// ── World sprites ─────────────────────────────────────────────────────────────
 let heroSpr, enemySpr, heroTrail=[];
 const heroBase={x:W/2, y:374};
 const enemyBase={x:W/2, y:164};
@@ -387,22 +378,16 @@ function buildWorld(){
   enemySpr.position.set(enemyBase.x, enemyBase.y);
   enemySpr.scale.set(1.22);
   Lworld.addChild(enemySpr);
-
-  // Aura graphics behind hero
-  const haura=new PIXI.Graphics();
-  haura.name='haura';
-  Lworld.addChild(haura);
 }
 
 const bgG=new PIXI.Graphics(); Lbg.addChild(bgG);
 const worldG=new PIXI.Graphics(); Lworld.addChild(worldG);
 const fxG=new PIXI.Graphics(); Lfx.addChild(fxG);
 
-// ── Background draw ───────────────────────────────────────────────────────────
+// ── Background ────────────────────────────────────────────────────────────────
 function drawBG(){
   bgG.clear();
   const t=G.tick;
-  // Bright high-DPI action backdrop: painterly sky, water, canyon walls, and a clear lane.
   const skyBands=[
     [0,0x9ff6ff,1],[46,0x76e8f2,0.92],[98,0x51cad8,0.9],[156,0x37b9cf,0.95],
     [230,0x64d5d7,1],[H,0x9de8cf,1],
@@ -412,7 +397,7 @@ function drawBG(){
     bgG.beginFill(col,a); bgG.drawRect(0,y,W,y2-y); bgG.endFill();
   });
   bgG.beginFill(0xffffff,0.55); bgG.drawEllipse(W/2,73,118,36); bgG.endFill();
-  bgG.beginFill(0xcffdf7,0.4); bgG.drawEllipse(W/2,93,170,42); bgG.endFill();
+  bgG.beginFill(0xcffdf7,0.4);  bgG.drawEllipse(W/2,93,170,42); bgG.endFill();
 
   const drift=Math.sin(t*0.00025)*8;
   [[35,78,86,18],[128,54,80,16],[275,72,98,19],[330,118,78,15]].forEach(([x,y,w,h],i)=>{
@@ -424,10 +409,10 @@ function drawBG(){
   bgG.beginFill(0x67c795,0.95); bgG.drawPolygon([W,50,W-72,20,W-156,165,W,248]); bgG.endFill();
   bgG.beginFill(0xa5e2b8,0.68); bgG.drawPolygon([W,52,W-38,84,W-124,174,W,218]); bgG.endFill();
 
-  [[30,104,58,150],[W-30,104,58,150],[89,142,34,105],[W-89,142,34,105]].forEach(([x,y,w,h],i)=>{
+  [[30,104,58,150],[W-30,104,58,150],[89,142,34,105],[W-89,142,34,105]].forEach(([x,y,w,h])=>{
     bgG.beginFill(0x2e6d73,0.42); bgG.drawEllipse(x,y+h+22,w*1.1,13); bgG.endFill();
     bgG.beginFill(0x396f6a,0.74); bgG.drawRoundedRect(x-w/2,y,w,h,2); bgG.endFill();
-    bgG.beginFill(0x244f55,0.2); bgG.drawRect(x-w/2,y,w,10); bgG.drawRect(x-w/2,y+h-12,w,12); bgG.endFill();
+    bgG.beginFill(0x244f55,0.2);  bgG.drawRect(x-w/2,y,w,10); bgG.drawRect(x-w/2,y+h-12,w,12); bgG.endFill();
     bgG.beginFill(0xb8ffd6,0.32); bgG.drawRect(x-w/2+6,y+14,7,h-30); bgG.endFill();
     bgG.beginFill(0x0d2930,0.11); bgG.drawRect(x+w/2-8,y+7,8,h-14); bgG.endFill();
   });
@@ -435,49 +420,31 @@ function drawBG(){
   bgG.beginFill(0xd6fff0,0.74); bgG.drawPolygon([W/2-58,92,W/2+58,92,W-10,H,10,H]); bgG.endFill();
   bgG.beginFill(0x8ace9e,0.92); bgG.drawPolygon([W/2-34,104,W/2+34,104,W-69,H,69,H]); bgG.endFill();
   bgG.beginFill(0xeafff2,0.23); bgG.drawPolygon([W/2-12,125,W/2+12,125,W-116,H,116,H]); bgG.endFill();
-  bgG.lineStyle(2,0xf3fff5,0.24);
-  bgG.moveTo(W/2-54,126); bgG.lineTo(42,H);
-  bgG.moveTo(W/2+54,126); bgG.lineTo(W-42,H);
-  bgG.lineStyle(0);
 
   for(let y=146;y<H;y+=46){
-    const spread=(y-96)*0.22;
     bgG.beginFill(0xf8fff8,0.2);
-    bgG.drawEllipse(W/2+Math.sin(y*0.07+t*0.0007)*6,y,48+spread,4);
+    bgG.drawEllipse(W/2+Math.sin(y*0.07+t*0.0007)*6,y,48+(y-96)*0.22,4);
     bgG.endFill();
-  }
-  for(let i=0;i<28;i++){
-    const sx=(Math.sin(t*0.00045+i*0.81)*0.5+0.5)*W;
-    const sy=58+(Math.cos(t*0.00035+i*1.13)*0.5+0.5)*(H-120);
-    const a=0.12+0.1*Math.sin(t*0.002+i*0.9);
-    bgG.beginFill(0xffffff,a); bgG.drawCircle(sx,sy,1.2+(i%3)*0.35); bgG.endFill();
-  }
-  bgG.beginFill(0xffffff,0.08); bgG.drawRect(0,0,W,H); bgG.endFill();
-  if(SETTINGS.highContrast){
-    bgG.beginFill(0x00111c,0.18); bgG.drawRect(0,0,W,H); bgG.endFill();
   }
 }
 
-// ── World (enemy glow, hero aura, arena line) ─────────────────────────────────
+// ── World draw (enemy glow, HP bar, hero aura) ────────────────────────────────
 function drawWorld(){
   worldG.clear(); fxG.clear();
   const t=G.tick;
 
-  // Soft combat focus glow on the lane.
   worldG.beginFill(0xffffff,0.22); worldG.drawEllipse(W/2,265,116,35); worldG.endFill();
   worldG.beginFill(0x35ee86,0.16); worldG.drawEllipse(W/2,356,100,30); worldG.endFill();
 
-  // Enemy glow (only if alive)
   if(G.eHP>0&&enemySpr){
     const bob=Math.sin(t*0.004)*5;
     enemySpr.y=enemyBase.y+bob;
     const pulse=0.1+0.06*Math.abs(Math.sin(t*0.005));
     fxG.beginFill(0xbd2fff,pulse*1.8); fxG.drawCircle(enemyBase.x,enemyBase.y+bob,62); fxG.endFill();
-    fxG.beginFill(0xff55ee,pulse*0.75); fxG.drawCircle(enemyBase.x,enemyBase.y+bob,92); fxG.endFill();
+    fxG.beginFill(0xff55ee,pulse*0.75);fxG.drawCircle(enemyBase.x,enemyBase.y+bob,92); fxG.endFill();
     fxG.beginFill(0x000000,0.20);      fxG.drawEllipse(enemyBase.x,enemyBase.y+bob+51,80,17); fxG.endFill();
     enemySpr.visible=true;
 
-    // Enemy HP bar
     const bw=136,bh=10,bx=enemyBase.x-bw/2,by=enemyBase.y-bob+62;
     worldG.beginFill(0x16314a,0.85); worldG.drawRoundedRect(bx,by,bw,bh,4); worldG.endFill();
     const hf=Math.max(0,G.eHP/G.eMaxHP);
@@ -485,18 +452,16 @@ function drawWorld(){
     worldG.drawRoundedRect(bx+1,by+1,(bw-2)*hf,bh-2,3); worldG.endFill();
     worldG.beginFill(0xffffff,0.35); worldG.drawRoundedRect(bx+3,by+2,(bw-8)*hf*0.5,2,1); worldG.endFill();
     worldG.lineStyle(1,0xffffff,0.55); worldG.drawRoundedRect(bx,by,bw,bh,4); worldG.lineStyle(0);
-  } else if(enemySpr) {
+  } else if(enemySpr){
     enemySpr.visible=false;
   }
 
-  // Hero aura pulse
   if(heroSpr){
     const auraCol=G.abilities[0].ready?C.fire:G.abilities[1].ready?C.cyan:C.purple;
     const ap=0.12+0.08*Math.abs(Math.sin(t*0.005));
     fxG.beginFill(auraCol,ap*1.8); fxG.drawCircle(heroSpr.x,heroSpr.y,54); fxG.endFill();
     fxG.beginFill(0xffffff,ap*0.48);fxG.drawCircle(heroSpr.x,heroSpr.y,72); fxG.endFill();
     fxG.beginFill(0x000000,0.18);   fxG.drawEllipse(heroSpr.x,heroSpr.y+38,58,13); fxG.endFill();
-    // motion trail
     heroTrail.forEach((tr,i)=>{
       const a=tr.alpha*(1-i/heroTrail.length)*0.4;
       if(a>0.01){
@@ -507,34 +472,30 @@ function drawWorld(){
     });
   }
 
-  // Wave/enemy name
   if(_waveTxt){
     _waveTxt.text=`WAVE ${G.wave}`;
     _eLvlTxt.text=`${Math.ceil(G.eHP)}/${G.eMaxHP} HP${G.enemyShield>0?`  SH ${G.enemyShield}`:''}`;
   }
 }
 
-// ── UI text objects ────────────────────────────────────────────────────────────
+// ── UI texts ──────────────────────────────────────────────────────────────────
 let _waveTxt,_eLvlTxt,_handTxt,_chTxt,_mulTxt,_scorTxt,_hpTxt,_xpTxt,_intentTxt,_comboTxt;
-let _handsTxt,_discTxt;
+let _discTxt, _phaseTxt;
 
 function buildUITexts(){
   function T(s,sz,col,ax=0.5,ay=0.5){
-    const t=new PIXI.Text(s,{fontFamily:FONT,fontSize:sz,fill:col,
-      stroke:'#000000',strokeThickness:Math.max(2,sz*0.3),align:'center'});
+    const t=new PIXI.Text(s,{fontFamily:FONT,fontSize:sz,fill:col,align:'center'});
     t.anchor.set(ax,ay); return t;
   }
 
-  _waveTxt=T('WAVE 1',9,C.gold);          _waveTxt.position.set(W/2,21);   Lui.addChild(_waveTxt);
-  _eLvlTxt=T('',6,0xffffff);              _eLvlTxt.position.set(W/2,43);   Lui.addChild(_eLvlTxt);
-  _intentTxt=T('',6,0xffeeee);            _intentTxt.position.set(W/2,60);  Lui.addChild(_intentTxt);
+  _waveTxt =T('WAVE 1',9,C.gold);      _waveTxt.position.set(W/2,21);  Lui.addChild(_waveTxt);
+  _eLvlTxt =T('',6,0xffffff);          _eLvlTxt.position.set(W/2,38);  Lui.addChild(_eLvlTxt);
+  _intentTxt=T('',6,0xffeeee);         _intentTxt.position.set(W/2,55); Lui.addChild(_intentTxt);
 
-  // Score panel texts
-  _handTxt=T('',8,C.white);               _handTxt.position.set(W/2,UI.scoreY-24);  Lui.addChild(_handTxt);
-  _chTxt =T('0',12,C.chips);              _chTxt.position.set(W*0.27,UI.scoreY-2); Lui.addChild(_chTxt);
-  _mulTxt=T('1',12,C.mult);               _mulTxt.position.set(W*0.73,UI.scoreY-2);Lui.addChild(_mulTxt);
-  _scorTxt=T('0',13,C.gold);              _scorTxt.position.set(W/2,UI.scoreY+20);  Lui.addChild(_scorTxt);
-  // Labels
+  _handTxt =T('',8,C.white);           _handTxt.position.set(W/2,UI.scoreY-24); Lui.addChild(_handTxt);
+  _chTxt   =T('0',12,C.chips);         _chTxt.position.set(W*0.27,UI.scoreY-2); Lui.addChild(_chTxt);
+  _mulTxt  =T('1',12,C.mult);          _mulTxt.position.set(W*0.73,UI.scoreY-2);Lui.addChild(_mulTxt);
+  _scorTxt =T('0',13,C.gold);          _scorTxt.position.set(W/2,UI.scoreY+20); Lui.addChild(_scorTxt);
   [T('CHIPS',5,C.chips),T('×',10,C.white),T('MULT',5,C.mult),T('=',8,C.white),T('SCORE',5,C.gold)]
     .forEach((t,i)=>{
       const xs=[W*0.27,W*0.5,W*0.73,W*0.42,W*0.59];
@@ -542,28 +503,25 @@ function buildUITexts(){
       t.position.set(xs[i],ys[i]); Lui.addChild(t);
     });
 
-  // Player HP
-  _hpTxt=T('60/60',8,C.white,0,0.5);     _hpTxt.position.set(45,15);      Lui.addChild(_hpTxt);
-  // XP
-  _xpTxt=T('XP 0/60',5,C.xpC,1,0.5);    _xpTxt.position.set(W-11,8);    Lui.addChild(_xpTxt);
-  _comboTxt=T('',6,C.gold,1,0.5);         _comboTxt.position.set(W-13,31); Lui.addChild(_comboTxt);
+  _hpTxt  =T('80/80',8,C.white,0,0.5);  _hpTxt.position.set(45,15);      Lui.addChild(_hpTxt);
+  _xpTxt  =T('XP 0/80',5,C.xpC,1,0.5); _xpTxt.position.set(W-11,8);     Lui.addChild(_xpTxt);
+  _comboTxt=T('',6,C.gold,1,0.5);        _comboTxt.position.set(W-13,31); Lui.addChild(_comboTxt);
 
-  // Hand/discard counters
-  _handsTxt=T('4',11,C.blue);             _handsTxt.position.set(45,H-82);Lui.addChild(_handsTxt);
-  _discTxt =T('3',11,C.red);              _discTxt.position.set(103,H-82); Lui.addChild(_discTxt);
-  [T('HANDS',5,0x8888ff),T('DISC',5,0xff8888)].forEach((t,i)=>{
-    t.position.set([45,103][i],H-70); Lui.addChild(t);
-  });
+  _discTxt=T('3',11,C.red);              _discTxt.position.set(55,H-82);  Lui.addChild(_discTxt);
+  T('REROLL',4,0xff8888).position.set&&(() => {
+    const lbl=T('REROLL',4,0xff8888); lbl.anchor.set(0.5); lbl.position.set(55,H-68); Lui.addChild(lbl);
+  })();
+
+  _phaseTxt=T('YOUR TURN',7,C.green); _phaseTxt.position.set(W/2,H-82); Lui.addChild(_phaseTxt);
 }
 
-// ── Static UI panels (Graphics) ───────────────────────────────────────────────
+// ── Panels ────────────────────────────────────────────────────────────────────
 const panG=new PIXI.Graphics(); Lui.addChild(panG);
 function drawPanels(){
   panG.clear();
-
   function pill(x,y,w,h,fill=0x17314a,borderCol=C.border,r=10){
     panG.beginFill(0x061523,0.24); panG.drawRoundedRect(x+3,y+5,w,h,r); panG.endFill();
-    panG.beginFill(fill,0.78); panG.drawRoundedRect(x,y,w,h,r); panG.endFill();
+    panG.beginFill(fill,0.78);     panG.drawRoundedRect(x,y,w,h,r);     panG.endFill();
     panG.beginFill(0xffffff,0.18); panG.drawRoundedRect(x+3,y+3,w-6,Math.max(5,h*0.34),Math.max(4,r-3)); panG.endFill();
     panG.lineStyle(2,borderCol,0.82); panG.drawRoundedRect(x,y,w,h,r); panG.lineStyle(0);
   }
@@ -583,33 +541,27 @@ function drawPanels(){
   panG.beginFill(0x79ecff,0.16); panG.drawRoundedRect(8,UI.diceY-45,W-16,90,10); panG.endFill();
   panG.lineStyle(2,0xdfffff,0.32); panG.drawRoundedRect(16,UI.diceY-38,W-32,76,9); panG.lineStyle(0);
 
-  pill(18,H-96,118,39,0x18304e,0xdfffff,10);
+  pill(8,H-100,84,42,0x18304e,0xdfffff,10);
   pill(W-150,H-119,142,44,0x18304e,0xdfffff,10);
   pill(W-186,UI.attackY-28,176,55,0x47a5ff,0xf5ffff,14);
 
-  // HP bar track
   const bw=126,bx=14,by=31;
   panG.beginFill(0x1b3854,0.9); panG.drawRoundedRect(bx,by,bw,9,4); panG.endFill();
   panG.lineStyle(1,0xffffff,0.45); panG.drawRoundedRect(bx,by,bw,9,4); panG.lineStyle(0);
-  // XP bar track
   panG.beginFill(0x18314a,0.72); panG.drawRoundedRect(W-124,16,82,6,3); panG.endFill();
   panG.lineStyle(1,C.xpC,0.45); panG.drawRoundedRect(W-124,16,82,6,3); panG.lineStyle(0);
 }
 
-// Live-update bars
 const barG=new PIXI.Graphics(); Lui.addChild(barG);
 function drawBars(){
   barG.clear();
-  // HP bar fill
   const hf=Math.max(0,G.pHP/G.pMaxHP);
   barG.beginFill(hf>0.5?C.hpG:hf>0.25?C.orange:C.hp);
   barG.drawRoundedRect(15,32,124*hf,7,3); barG.endFill();
   barG.beginFill(0xffffff,0.35); barG.drawRoundedRect(15,32,124*hf*0.5,2,1); barG.endFill();
-  // XP bar fill
   const xf=Math.min(1,G.xp/G.xpNext);
   barG.beginFill(C.xpC); barG.drawRoundedRect(W-123,17,80*xf,4,2); barG.endFill();
   barG.beginFill(C.borderG,0.5); barG.drawRoundedRect(W-123,17,80*xf*0.5,2,1); barG.endFill();
-  // XP markers (ability unlock points)
   G.abilities.forEach(ab=>{
     const mx=W-123+80*(ab.xpReq/G.xpNext);
     if(mx<=W-43){
@@ -617,14 +569,22 @@ function drawBars(){
       barG.drawRect(mx-1,15,2,8); barG.endFill();
     }
   });
-
-  if(_hpTxt) _hpTxt.text=`${G.pHP}/${G.pMaxHP}`;
-  if(_xpTxt) _xpTxt.text=`XP ${G.xp}/${G.xpNext}`;
+  if(_hpTxt)   _hpTxt.text=`${G.pHP}/${G.pMaxHP}`;
+  if(_xpTxt)   _xpTxt.text=`XP ${G.xp}/${G.xpNext}`;
   if(_intentTxt&&G.intent) _intentTxt.text=`${G.intent.name} ${G.intent.desc}`;
   if(_comboTxt) _comboTxt.text=G.combo>1?`COMBO x${G.combo}`:'';
+  if(_discTxt)  _discTxt.text=String(G.discardsLeft);
+  if(_phaseTxt){
+    if(G.phase==='enemyTurn'){
+      _phaseTxt.text='ENEMY TURN'; _phaseTxt.style.fill='#'+C.red.toString(16).padStart(6,'0');
+    } else if(G.phase==='roll'){
+      _phaseTxt.text='YOUR TURN'; _phaseTxt.style.fill='#'+C.green.toString(16).padStart(6,'0');
+    } else {
+      _phaseTxt.text='';
+    }
+  }
 }
 
-// ── Score panel update ────────────────────────────────────────────────────────
 function updateScorePanel(){
   const active=G.dice.filter(d=>d.held);
   const toScore=active.length?active:G.dice;
@@ -639,7 +599,7 @@ function updateScorePanel(){
   }
 }
 
-// ── Ability slots UI ──────────────────────────────────────────────────────────
+// ── Ability bar ───────────────────────────────────────────────────────────────
 const abilG=new PIXI.Graphics(); Lui.addChild(abilG);
 let abilZones=[], abilSprites=[], abilTxts=[];
 
@@ -651,24 +611,19 @@ function buildAbilityBar(){
 
   const texMap={blaze:TEX.blaze,thunder:TEX.thunder,frost:TEX.frost,deathspin:TEX.deathspin};
   G.abilities.forEach((ab,i)=>{
-    const cellW=34;
-    const sx=W-145+i*cellW, sy=H-114;
-
-    // Icon sprite
+    const cellW=34, sx=W-145+i*cellW, sy=H-114;
     if(texMap[ab.id]){
       const spr=new PIXI.Sprite(texMap[ab.id]);
       spr.anchor.set(0.5); spr.position.set(sx+18,sy+20);
       spr.alpha=ab.unlocked?1:0.3;
       Lui.addChild(spr); abilSprites.push(spr);
     }
-
-    // Zone
     const z=new PIXI.Graphics();
     z.beginFill(0xffffff,0.001); z.drawRoundedRect(sx,sy,cellW-3,39,7); z.endFill();
-    if(ab.unlocked&&ab.ready){ z.eventMode='static'; z.cursor='pointer'; z.on('pointertap',()=>useAbility(i)); }
+    if(ab.unlocked&&ab.ready&&G.phase==='roll'){
+      z.eventMode='static'; z.cursor='pointer'; z.on('pointertap',()=>useAbility(i));
+    }
     Lui.addChild(z); abilZones.push(z);
-
-    // Level label
     const t=new PIXI.Text('',{fontFamily:FONT,fontSize:4,fill:0xaaaaaa,align:'center'});
     t.anchor.set(0.5); t.position.set(sx+18,sy+36); Lui.addChild(t); abilTxts.push(t);
   });
@@ -676,11 +631,9 @@ function buildAbilityBar(){
 
 function drawAbilityBar(){
   abilG.clear();
-  const t=G.tick;
-    const cellW=34;
+  const t=G.tick, cellW=34;
   G.abilities.forEach((ab,i)=>{
     const sx=W-145+i*cellW, sy=H-114;
-    // Cell bg
     abilG.beginFill(0x16324b,0.76); abilG.drawRoundedRect(sx,sy,cellW-3,39,7); abilG.endFill();
     abilG.beginFill(0xffffff,0.18); abilG.drawRoundedRect(sx+2,sy+2,cellW-7,12,5); abilG.endFill();
     if(ab.unlocked){
@@ -692,7 +645,6 @@ function drawAbilityBar(){
       }
     } else {
       abilG.lineStyle(1,0x6b8b9a,0.55); abilG.drawRoundedRect(sx,sy,cellW-3,39,7); abilG.lineStyle(0);
-      // Show XP requirement
       if(abilTxts[i]) abilTxts[i].text=`${ab.xpReq}xp`;
     }
     if(abilSprites[i]) abilSprites[i].alpha=ab.unlocked?(ab.ready?1:0.5):0.2;
@@ -705,7 +657,7 @@ let diceZones=[];
 const DSZ=50;
 
 function rebuildDiceZones(){
-  diceZones.forEach(z=>Ldice.removeChild(z)); diceZones=[]; 
+  diceZones.forEach(z=>Ldice.removeChild(z)); diceZones=[];
   const n=G.dice.length;
   const DS=SETTINGS.largeDice?56:DSZ;
   const spc=Math.min(DS+8,(W-38)/n);
@@ -734,45 +686,37 @@ function drawDice(){
   const sx=W/2-spc*(n-1)/2;
 
   G.dice.forEach((d,i)=>{
-    // spring physics
     d.vy=(d.vy||0)*0.72;
-    const cy=UI.diceY+d.vy;
+    // Held dice float + gently bob; non-held dice wobble while vy is large (rolling)
+    const rolling=Math.abs(d.vy)>4;
+    const wobble=rolling?(Math.sin(G.tick*0.07+i*1.8)*6*(Math.abs(d.vy)/50)):0;
+    const cy=UI.diceY+d.vy+wobble;
     const cx=sx+i*spc;
     const ec=EL_COL[d.el||'none'];
     const held=d.held;
-    const heldY=held?-20:0;
+    // Held dice stay elevated and bob smoothly
+    const bobOffset=held?Math.sin(G.tick*0.005+i*0.9)*4:0;
+    const heldY=held?-26+bobOffset:0;
 
-    // Elemental outer double-glow
     if(ec){
       diceG.beginFill(ec,0.18); diceG.drawRoundedRect(cx-DS/2-11,cy-DS/2-11+heldY,DS+22,DS+22,10); diceG.endFill();
       diceG.beginFill(ec,0.28); diceG.drawRoundedRect(cx-DS/2-6,cy-DS/2-6+heldY,DS+12,DS+12,8); diceG.endFill();
     }
-
-    // HELD golden selector
     if(held){
       diceG.beginFill(C.gold,0.18); diceG.drawRoundedRect(cx-DS/2-9,cy-DS/2-9+heldY,DS+18,DS+18,10); diceG.endFill();
       diceG.lineStyle(3,C.gold,0.95); diceG.drawRoundedRect(cx-DS/2-4,cy-DS/2-4+heldY,DS+8,DS+8,8); diceG.lineStyle(0);
     }
-
-    // Shadow
     diceG.beginFill(0x2aa8bd,0.20); diceG.drawCircle(cx,cy+heldY,DS*0.78); diceG.endFill();
     diceG.beginFill(0xffffff,0.40); diceG.drawCircle(cx,cy+heldY,DS*0.58); diceG.endFill();
     diceG.beginFill(0x000000,0.22); diceG.drawRoundedRect(cx-DS/2+5,cy-DS/2+6+heldY,DS,DS,7); diceG.endFill();
 
-    // Face
     const fcol=held?C.dieSel:C.dieW;
     diceG.beginFill(fcol); diceG.drawRoundedRect(cx-DS/2,cy-DS/2+heldY,DS,DS,7); diceG.endFill();
-
-    // Bevel light (top+left 2px)
     diceG.beginFill(0xffffff,0.68); diceG.drawRoundedRect(cx-DS/2+3,cy-DS/2+3+heldY,DS-6,5,3); diceG.endFill();
     diceG.beginFill(0xffffff,0.35); diceG.drawRoundedRect(cx-DS/2+3,cy-DS/2+3+heldY,5,DS-6,3); diceG.endFill();
-    // Bevel dark (bottom+right)
     diceG.beginFill(0x000000,0.12); diceG.drawRoundedRect(cx-DS/2+4,cy+DS/2-6+heldY,DS-8,4,2); diceG.endFill();
-
-    // Border
     diceG.lineStyle(2,ec||0x8eeeff,1); diceG.drawRoundedRect(cx-DS/2,cy-DS/2+heldY,DS,DS,7); diceG.lineStyle(0);
 
-    // Dots
     const dots=DOTS[d.value]||[[0,0]];
     const pad=13, dr=4;
     dots.forEach(([dpx,dpy])=>{
@@ -782,7 +726,6 @@ function drawDice(){
       diceG.beginFill(0xffffff,0.4); diceG.drawRect(dx-dr,dy-dr,dr,dr);         diceG.endFill();
     });
 
-    // Elemental corner gem
     if(ec){
       diceG.beginFill(0x000000,0.4); diceG.drawRect(cx+DS/2-12,cy-DS/2+heldY,12,12); diceG.endFill();
       diceG.beginFill(ec,1);         diceG.drawRect(cx+DS/2-11,cy-DS/2+1+heldY,10,10);diceG.endFill();
@@ -790,12 +733,23 @@ function drawDice(){
     }
   });
 
-  // HELD labels (rendered above dice)
   G.dice.forEach((d,i)=>{
     if(!d.held) return;
-    const cx=sx+i*spc, ty=UI.diceY-20-DS/2-12;
+    const cx=sx+i*spc;
+    const bobOffset=Math.sin(G.tick*0.005+i*0.9)*4;
+    const heldY=-26+bobOffset;
+    // HELD badge
+    const ty=UI.diceY+heldY-DS/2-14;
     diceG.beginFill(C.gold,0.95); diceG.drawRoundedRect(cx-18,ty,36,12,4); diceG.endFill();
     diceG.lineStyle(1,0xffffff,0.7); diceG.drawRoundedRect(cx-18,ty,36,12,4); diceG.lineStyle(0);
+    // Sparkle dots around held die
+    const sparkCount=4;
+    for(let s=0;s<sparkCount;s++){
+      const angle=G.tick*0.008+s*(Math.PI*2/sparkCount)+(i*0.5);
+      const sr=DS*0.62, sx2=cx+Math.cos(angle)*sr, sy2=UI.diceY+heldY+Math.sin(angle)*sr*0.55;
+      const sa=0.4+0.3*Math.sin(G.tick*0.01+s*1.7);
+      diceG.beginFill(C.gold,sa); diceG.drawRect(sx2-2,sy2-2,4,4); diceG.endFill();
+    }
   });
 }
 
@@ -808,13 +762,12 @@ function buildButtons(){
     z.beginFill(0xffffff,0.001); z.drawRect(cx-bw/2,cy-bh/2,bw,bh); z.endFill();
     z.eventMode='static'; z.cursor='pointer'; z.on('pointertap',cb);
     Lui.addChild(z);
-    const t=new PIXI.Text(label,{fontFamily:FONT,fontSize:fs,fill:C.white,
-      stroke:'#000000',strokeThickness:3,align:'center'});
+    const t=new PIXI.Text(label,{fontFamily:FONT,fontSize:fs,fill:C.white,align:'center'});
     t.anchor.set(0.5); t.position.set(cx,cy); Lui.addChild(t);
     btnTxts[id]={cx,cy,bw,bh,col,t};
   }
-  makeBtn('play',W-98,UI.attackY,170,48,C.blue,'ATTACK',12,()=>onPlayHand());
-  makeBtn('disc',77,UI.controlsY,104,36,0xcc2d35,'REROLL',7,()=>onDiscard());
+  makeBtn('play', W-98,UI.attackY,  170,48,C.blue,   'ATTACK',  12,()=>onPlayHand());
+  makeBtn('disc', 55,  UI.controlsY, 90,36,0xcc2d35,  'REROLL',   7,()=>onDiscard());
   makeBtn('settings',W-24,18,34,34,0x294f61,'',8,()=>showSettings());
 }
 function drawButtons(){
@@ -840,21 +793,16 @@ function drawButtons(){
     btnG.lineStyle(0);
   });
 }
-function drawStats(){
-  if(_handsTxt){ _handsTxt.text=String(G.handsLeft); _discTxt.text=String(G.discardsLeft); }
-}
 
+// ── Settings ──────────────────────────────────────────────────────────────────
 let settingsZones=[];
 function showSettings(){
   if(G.busy&&G.phase!=='roll') return;
   Lover.removeChildren(); settingsZones=[];
-  const oldPhase=G.phase;
-  G.phase='settings';
-
+  const oldPhase=G.phase; G.phase='settings';
   const ov=new PIXI.Graphics();
   ov.beginFill(0x05111c,0.92); ov.drawRect(0,0,W,H); ov.endFill();
   Lover.addChild(ov);
-
   const panel=new PIXI.Graphics();
   panel.beginFill(0x102942,0.98); panel.drawRoundedRect(12,18,W-24,H-36,16); panel.endFill();
   panel.beginFill(0xffffff,0.12); panel.drawRoundedRect(18,24,W-36,84,13); panel.endFill();
@@ -862,8 +810,7 @@ function showSettings(){
   Lover.addChild(panel);
 
   function T(s,sz,x,y,col=0xffffff,ax=0){
-    const t=new PIXI.Text(s,{fontFamily:FONT,fontSize:sz,fill:'#'+col.toString(16).padStart(6,'0'),
-      stroke:'#000000',strokeThickness:Math.max(2,sz*0.35),align:'left',wordWrap:true,wordWrapWidth:W-52});
+    const t=new PIXI.Text(s,{fontFamily:FONT,fontSize:sz,fill:'#'+col.toString(16).padStart(6,'0'),align:'left',wordWrap:true,wordWrapWidth:W-52});
     t.anchor.set(ax,0.5); t.position.set(x,y); Lover.addChild(t); return t;
   }
   T('SETTINGS',18,30,50,C.gold);
@@ -899,7 +846,7 @@ function showSettings(){
   ['chill','normal','brutal'].forEach((d,i)=>{
     button(30+i*112,140,100,34,d.toUpperCase(),SETTINGS.difficulty===d?0x2f91ff:0x30475d,()=>{
       SETTINGS.difficulty=d;
-      smallPopup(W/2,135,'DIFFICULTY APPLIES NEXT ENEMY',C.gold);
+      smallPopup(W/2,135,'NEXT ENEMY',C.gold);
       showSettings();
     },6);
   });
@@ -928,13 +875,12 @@ function showSettings(){
   },8);
   button(200,468,150,38,'UNLOCK ALL',0x7b3fd6,()=>{
     G.abilities.forEach(a=>{a.unlocked=true;a.ready=true;});
-    buildAbilityBar();
-    showSettings();
+    buildAbilityBar(); showSettings();
   },7);
 
   T(`WAVE ${G.wave}   LV ${G.level}   HP ${G.pHP}/${G.pMaxHP}`,7,31,540,0xdfffff);
   T(`Enemy intent: ${G.intent?G.intent.name+' '+G.intent.desc:'none'}`,6,31,566,0xffd4d4);
-  T('Tip: stronger hands reduce incoming damage and build combo. Guard intents add enemy shield if ignored.',5,31,604,0xb8d9e8);
+  T('Tip: stronger hands reduce incoming damage and build combo.',5,31,604,0xb8d9e8);
   button(W-76,36,46,38,'X',0xcc2d35,()=>closeSettings(oldPhase),12);
 }
 
@@ -943,12 +889,7 @@ function closeSettings(oldPhase='roll'){
   G.phase=oldPhase==='settings'?'roll':oldPhase;
 }
 
-// ── ATTACK ANIMATION ENGINE ───────────────────────────────────────────────────
-// Creates spectacular animations per hand tier
-
-const atkLayer=new PIXI.Container(); Lfx.addChild(atkLayer);
-
-// Shake state
+// ── FX: screen shake ──────────────────────────────────────────────────────────
 let shakeAmt=0, shakeTick=null;
 function shake(strength, dur){
   if(!SETTINGS.shake||SETTINGS.reduceMotion) return;
@@ -958,9 +899,9 @@ function shake(strength, dur){
   shakeTick=app.ticker.add(()=>{
     elapsed+=app.ticker.deltaMS;
     const t=Math.min(1,elapsed/dur);
-    app.stage.x=(Math.random()-0.5)*shakeAmt*(1-t);
-    app.stage.y=(Math.random()-0.5)*shakeAmt*(1-t);
-    if(t>=1){ app.stage.x=0; app.stage.y=0; app.ticker.remove(shakeTick); }
+    design.x=designOffX+(Math.random()-0.5)*shakeAmt*(1-t);
+    design.y=designOffY+(Math.random()-0.5)*shakeAmt*(1-t);
+    if(t>=1){ design.x=designOffX; design.y=designOffY; app.ticker.remove(shakeTick); }
   });
 }
 
@@ -970,11 +911,13 @@ function screenFlash(col,dur=200){
   Lpopup.addChild(g);
   setTimeout(()=>{
     let a=0.4;
-    const t=app.ticker.add(()=>{a-=0.035;g.alpha=Math.max(0,a);if(a<=0){Lpopup.removeChild(g);app.ticker.remove(t);}});
+    const tt=app.ticker.add(()=>{a-=0.035;g.alpha=Math.max(0,a);if(a<=0){Lpopup.removeChild(g);app.ticker.remove(tt);}});
   },dur);
 }
 
-// Slash arc effect
+// ── FX: attack animations ─────────────────────────────────────────────────────
+const atkLayer=new PIXI.Container(); Lfx.addChild(atkLayer);
+
 function slashArc(cx,cy,r,a0,a1,col,dur){
   const g=new PIXI.Graphics(); atkLayer.addChild(g);
   return new Promise(res=>anim(dur,t=>{
@@ -989,74 +932,63 @@ function slashArc(cx,cy,r,a0,a1,col,dur){
   },()=>{ atkLayer.removeChild(g); res(); }));
 }
 
-// Lightning bolt from top
 function lightningBolt(x,y1,y2,col,dur){
   const g=new PIXI.Graphics(); atkLayer.addChild(g);
-  const segs=12;
-  const pts=[];
+  const segs=12, pts=[];
   for(let i=0;i<=segs;i++){
-    const py=y1+(y2-y1)*(i/segs);
-    const px2=x+(Math.random()-0.5)*(i<segs?28:0);
-    pts.push([px2,py]);
+    pts.push([x+(Math.random()-0.5)*(i<segs?28:0), y1+(y2-y1)*(i/segs)]);
   }
   return new Promise(res=>anim(dur,t=>{
     g.clear();
     const a=Math.max(0,1-t*0.8);
     const n=Math.ceil(pts.length*easeOut(t));
-    // outer glow
     g.lineStyle(12,col,a*0.15);
     for(let i=1;i<n;i++){ g.moveTo(pts[i-1][0],pts[i-1][1]); g.lineTo(pts[i][0],pts[i][1]); }
-    // mid glow
     g.lineStyle(5,col,a*0.5);
     for(let i=1;i<n;i++){ g.moveTo(pts[i-1][0],pts[i-1][1]); g.lineTo(pts[i][0],pts[i][1]); }
-    // core white
     g.lineStyle(2,0xffffff,a);
     for(let i=1;i<n;i++){ g.moveTo(pts[i-1][0],pts[i-1][1]); g.lineTo(pts[i][0],pts[i][1]); }
     g.lineStyle(0);
   },()=>{ atkLayer.removeChild(g); res(); }));
 }
 
-// Shockwave ring
 function shockwave(cx,cy,col,maxR,dur){
   const g=new PIXI.Graphics(); atkLayer.addChild(g);
   return new Promise(res=>anim(dur,t=>{
     g.clear();
-    const r=maxR*easeOut(t);
-    const a=(1-t)*0.8;
+    const r=maxR*easeOut(t), a=(1-t)*0.8;
     g.lineStyle(6,col,a*0.3); g.drawCircle(cx,cy,r+8); g.lineStyle(0);
     g.lineStyle(3,col,a*0.7); g.drawCircle(cx,cy,r);   g.lineStyle(0);
     g.lineStyle(1,0xffffff,a);g.drawCircle(cx,cy,r-3); g.lineStyle(0);
   },()=>{ atkLayer.removeChild(g); res(); }));
 }
 
-// Star burst lines from a point
 function starBurst(cx,cy,col,count,len,dur){
   const g=new PIXI.Graphics(); atkLayer.addChild(g);
   const angles=Array.from({length:count},(_,i)=>i*(Math.PI*2/count)+Math.random()*0.2);
   return new Promise(res=>anim(dur,t=>{
     g.clear();
-    const a=Math.max(0,1-t);
-    const l=len*easeOut(t);
+    const a=Math.max(0,1-t), l=len*easeOut(t);
     angles.forEach(angle=>{
       const ex2=cx+Math.cos(angle)*l, ey2=cy+Math.sin(angle)*l;
       g.lineStyle(4,col,a*0.3); g.moveTo(cx,cy); g.lineTo(ex2,ey2);
       g.lineStyle(2,col,a*0.7); g.moveTo(cx,cy); g.lineTo(ex2,ey2);
-      g.lineStyle(1,0xffffff,a*0.9);g.moveTo(cx,cy);g.lineTo(ex2*(0.3+t*0.7)+cx*(0.7-t*0.7),ey2*(0.3+t*0.7)+cy*(0.7-t*0.7));
+      g.lineStyle(1,0xffffff,a*0.9);
+      g.moveTo(cx,cy);
+      g.lineTo(cx+(ex2-cx)*(0.3+t*0.7),cy+(ey2-cy)*(0.3+t*0.7));
     });
     g.lineStyle(0);
   },()=>{ atkLayer.removeChild(g); res(); }));
 }
 
-// Fire column
 function fireColumn(x,y,dur){
   const g=new PIXI.Graphics(); atkLayer.addChild(g);
   const pts=Array.from({length:30},()=>({
-    x:x+(Math.random()-0.5)*30, y:y, vy:-(60+Math.random()*80),
+    x:x+(Math.random()-0.5)*30, y, vy:-(60+Math.random()*80),
     size:4+Math.random()*8, life:Math.random()
   }));
-  return new Promise(res=>anim(dur,(t)=>{
-    g.clear();
-    const dts=0.016;
+  return new Promise(res=>anim(dur,t=>{
+    g.clear(); const dts=0.016;
     pts.forEach(p=>{
       p.y+=p.vy*dts; p.vy*=0.98; p.life+=dts*1.5; p.x+=(Math.random()-0.5)*2;
       const a=Math.max(0,Math.min(1,p.life<0.3?p.life/0.3:1-((p.life-0.3)/0.7)));
@@ -1070,11 +1002,140 @@ function fireColumn(x,y,dur){
   },()=>{ atkLayer.removeChild(g); res(); }));
 }
 
-// Hero dash to position and back
+// Sparks flying outward from impact point
+function impactSparks(cx,cy,col,count,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  const ps=Array.from({length:count},()=>{
+    const a=Math.random()*Math.PI*2;
+    const spd=80+Math.random()*180;
+    return {x:cx,y:cy,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-40,life:1,size:2+Math.random()*4};
+  });
+  return new Promise(res=>anim(dur,()=>{
+    g.clear(); const dts=0.016;
+    ps.forEach(p=>{
+      p.x+=p.vx*dts; p.y+=p.vy*dts; p.vy+=300*dts; p.life-=1.4*dts;
+      if(p.life>0){
+        g.beginFill(col,p.life*0.9); g.drawRect(p.x,p.y,p.size,p.size); g.endFill();
+        g.beginFill(0xffffff,p.life*0.4); g.drawRect(p.x,p.y,p.size*0.5,p.size*0.5); g.endFill();
+      }
+    });
+  },()=>{ atkLayer.removeChild(g); res(); }));
+}
+
+// Energy orbs converging to a point (charge-up before attack)
+function energyConverge(tx,ty,col,count,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  const orbs=Array.from({length:count},(_,i)=>{
+    const a=i*(Math.PI*2/count)+Math.random()*0.5;
+    const dist=50+Math.random()*80;
+    return {sx:tx+Math.cos(a)*dist,sy:ty+Math.sin(a)*dist,a};
+  });
+  return new Promise(res=>anim(dur,t=>{
+    g.clear();
+    orbs.forEach(o=>{
+      const x=lerp(o.sx,tx,easeIn(t)), y=lerp(o.sy,ty,easeIn(t));
+      const a=(1-t)*0.9, r=4*(1-t)+1;
+      g.beginFill(col,a*0.5); g.drawCircle(x,y,r*2); g.endFill();
+      g.beginFill(0xffffff,a); g.drawCircle(x,y,r); g.endFill();
+    });
+  },()=>{ atkLayer.removeChild(g); res(); }));
+}
+
+// Big impact crater ring + debris
+function craterBurst(cx,cy,col,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  const chunks=Array.from({length:16},()=>{
+    const a=Math.random()*Math.PI*2;
+    const spd=60+Math.random()*120;
+    return {x:cx,y:cy,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-30,life:1,w:3+Math.random()*6,h:2+Math.random()*4};
+  });
+  return new Promise(res=>anim(dur,t=>{
+    g.clear(); const dts=0.016;
+    const ra=(1-t)*0.7, rr=(cx*0.35)*easeOut(t);
+    g.lineStyle(8,col,ra*0.25); g.drawCircle(cx,cy,rr+10); g.lineStyle(0);
+    g.lineStyle(4,col,ra*0.6); g.drawCircle(cx,cy,rr); g.lineStyle(0);
+    g.lineStyle(2,0xffffff,ra); g.drawCircle(cx,cy,rr-4); g.lineStyle(0);
+    chunks.forEach(p=>{
+      p.x+=p.vx*dts; p.y+=p.vy*dts; p.vy+=280*dts; p.life-=1.2*dts;
+      if(p.life>0){
+        g.beginFill(col,p.life*0.8); g.drawRect(p.x,p.y,p.w,p.h); g.endFill();
+      }
+    });
+  },()=>{ atkLayer.removeChild(g); res(); }));
+}
+
+// Horizontal slash wave that sweeps across enemy
+function slashWave(cx,cy,col,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  return new Promise(res=>anim(dur,t=>{
+    g.clear();
+    const a=Math.max(0,1-t*1.2);
+    const w=120*easeOut(t), h=8+t*4;
+    g.beginFill(col,a*0.15); g.drawEllipse(cx,cy,w+12,h+8); g.endFill();
+    g.beginFill(col,a*0.5);  g.drawEllipse(cx,cy,w,h); g.endFill();
+    g.beginFill(0xffffff,a*0.9); g.drawEllipse(cx,cy,w*0.6,h*0.4); g.endFill();
+  },()=>{ atkLayer.removeChild(g); res(); }));
+}
+
+// Ice crystal shatter effect
+function iceShard(cx,cy,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  const shards=Array.from({length:12},(_,i)=>{
+    const a=i*(Math.PI*2/12);
+    return {a, dist:0, spd:40+Math.random()*60};
+  });
+  return new Promise(res=>anim(dur,t=>{
+    g.clear();
+    shards.forEach(s=>{
+      const d=(s.dist+s.spd*0.016)*easeOut(t)*80;
+      const x=cx+Math.cos(s.a)*d, y=cy+Math.sin(s.a)*d*0.6;
+      const al=Math.max(0,1-t*1.1);
+      const sz=5*(1-t*0.8);
+      g.beginFill(C.ice,al*0.5); g.drawPolygon([x,y-sz*2,x+sz,y+sz,x-sz,y+sz]); g.endFill();
+      g.beginFill(0xffffff,al*0.7); g.drawPolygon([x,y-sz,x+sz*0.5,y+sz*0.5,x-sz*0.5,y+sz*0.5]); g.endFill();
+    });
+  },()=>{ atkLayer.removeChild(g); res(); }));
+}
+
+// Hero glows and pulses before attack
+function heroChargeGlow(col,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  return new Promise(res=>anim(dur,t=>{
+    g.clear();
+    const r=34+18*easeOut(t), a=easeOut(t)*0.7;
+    g.beginFill(col,a*0.35); g.drawCircle(heroSpr.x,heroSpr.y,r+12); g.endFill();
+    g.beginFill(col,a*0.6);  g.drawCircle(heroSpr.x,heroSpr.y,r);    g.endFill();
+    g.beginFill(0xffffff,a*0.4); g.drawCircle(heroSpr.x,heroSpr.y,r*0.5); g.endFill();
+    heroSpr.scale.set(1.15+easeOut(t)*0.18);
+  },()=>{ heroSpr.scale.set(1.15); atkLayer.removeChild(g); res(); }));
+}
+
+// Dramatic zoom-in vignette for big attacks
+function vignetteFlash(col,dur){
+  const g=new PIXI.Graphics(); atkLayer.addChild(g);
+  return new Promise(res=>anim(dur,t=>{
+    g.clear();
+    const a=(t<0.3?t/0.3:1-(t-0.3)/0.7)*0.55;
+    // radial gradient fake: layered circles
+    [[0.9,0.1],[0.7,0.2],[0.5,0.12],[0.3,0.06]].forEach(([fill,alpha])=>{
+      g.beginFill(col,a*alpha); g.drawCircle(enemyBase.x,enemyBase.y,W*fill); g.endFill();
+    });
+  },()=>{ atkLayer.removeChild(g); res(); }));
+}
+
+// Enemy flash white/red when hit
+function enemyHitFlash(col=0xffffff,dur=100){
+  if(!enemySpr) return Promise.resolve();
+  return new Promise(res=>{
+    enemySpr.tint=col;
+    setTimeout(()=>{ enemySpr.tint=0xffffff; res(); },dur);
+  });
+}
+
+// ── Character movement ────────────────────────────────────────────────────────
 function heroDash(tx,ty,dur){
   return new Promise(res=>{
     const sx=heroSpr.x, sy=heroSpr.y;
-    // Add trail
     const ti=setInterval(()=>{
       heroTrail.unshift({x:heroSpr.x,y:heroSpr.y,alpha:0.8});
       if(heroTrail.length>8) heroTrail.pop();
@@ -1095,21 +1156,36 @@ function heroReturn(dur){
   });
 }
 
-// Enemy knockback
-function enemyKnock(dx,dur){
+function enemyDash(tx,ty,dur){
   return new Promise(res=>{
-    const sx=enemySpr.x;
+    const sx=enemySpr.x, sy=enemySpr.y;
     anim(dur,t=>{
-      enemySpr.x=sx+dx*easeBounce(t);
-    },()=>{ enemySpr.x=sx; res(); });
+      enemySpr.x=lerp(sx,tx,easeOut(t));
+      enemySpr.y=lerp(sy,ty,easeOut(t));
+    },res);
+  });
+}
+function enemyReturn(dur){
+  return new Promise(res=>{
+    const sx=enemySpr.x, sy=enemySpr.y;
+    anim(dur,t=>{
+      enemySpr.x=lerp(sx,enemyBase.x,easeOut(t));
+      enemySpr.y=lerp(sy,enemyBase.y,easeOut(t));
+    },res);
   });
 }
 
-// BIG floating damage text
+function enemyKnock(dx,dur){
+  return new Promise(res=>{
+    const sx=enemySpr.x;
+    anim(dur,t=>{ enemySpr.x=sx+dx*easeBounce(t); },()=>{ enemySpr.x=sx; res(); });
+  });
+}
+
+// ── Popup text ────────────────────────────────────────────────────────────────
 function bigDmgText(x,y,str,col){
   if(!SETTINGS.damageText) return;
-  const t=new PIXI.Text(str,{fontFamily:FONT,fontSize:24,fill:'#'+col.toString(16).padStart(6,'0'),
-    stroke:'#000000',strokeThickness:6,align:'center'});
+  const t=new PIXI.Text(str,{fontFamily:FONT,fontSize:24,fill:'#'+col.toString(16).padStart(6,'0'),align:'center'});
   t.anchor.set(0.5,1); t.position.set(x,y); t.scale.set(0.2);
   Lpopup.addChild(t);
   anim(300,t2=>{ t.scale.set(lerp(0.2,1.4,easeBack(t2))); },()=>{
@@ -1118,13 +1194,12 @@ function bigDmgText(x,y,str,col){
 }
 function bigPopup(str,col,scale=1){
   const t=new PIXI.Text(str,{fontFamily:FONT,fontSize:Math.round(14*scale),
-    fill:'#'+col.toString(16).padStart(6,'0'),stroke:'#000000',strokeThickness:5,align:'center'});
+    fill:'#'+col.toString(16).padStart(6,'0'),align:'center'});
   t.anchor.set(0.5,1); t.position.set(W/2,H*0.44); Lpopup.addChild(t);
   anim(800,t2=>{ t.y=H*0.44-50*t2; t.alpha=1-t2; },()=>Lpopup.removeChild(t));
 }
 function smallPopup(x,y,str,col){
-  const t=new PIXI.Text(str,{fontFamily:FONT,fontSize:9,fill:'#'+col.toString(16).padStart(6,'0'),
-    stroke:'#000000',strokeThickness:3,align:'center'});
+  const t=new PIXI.Text(str,{fontFamily:FONT,fontSize:9,fill:'#'+col.toString(16).padStart(6,'0'),align:'center'});
   t.anchor.set(0.5,1); t.position.set(x,y); Lpopup.addChild(t);
   anim(900,t2=>{ t.y=y-40*t2; t.alpha=1-t2; },()=>Lpopup.removeChild(t));
 }
@@ -1141,133 +1216,189 @@ function burst(x,y,col,n=18){
   },()=>Lpopup.removeChild(g));
 }
 
-// ── Master attack animation by tier ───────────────────────────────────────────
+// ── Player attack animations by tier ─────────────────────────────────────────
 async function playAttackAnim(tier, score, col){
   const ex=enemyBase.x, ey=enemyBase.y;
   const mid={x:(heroBase.x+ex)/2, y:(heroBase.y+ey)/2};
 
-  if(tier===0){ // High Die – quick single slash
+  if(tier===0){
+    // High Die — quick lunge + single slash
     await Promise.all([
-      heroDash(heroBase.x+40, heroBase.y-30, 180),
-      slashArc(mid.x, mid.y, 70, Math.PI*0.6, Math.PI*1.4, C.white, 250),
+      heroChargeGlow(C.white, 140),
+      energyConverge(ex,ey,C.white,5,200),
     ]);
-    shake(3,180);
-    burst(ex,ey,C.white,8);
-
-  } else if(tier===1){ // Pair – double slash
-    await heroDash(mid.x, mid.y-20, 180);
     await Promise.all([
-      slashArc(ex,ey,80,Math.PI*0.4,Math.PI*1.5,C.green,300),
-      slashArc(ex,ey,50,Math.PI*1.1,Math.PI*0.3,C.white,250),
+      heroDash(heroBase.x+44, heroBase.y-28, 160),
+      slashArc(mid.x,mid.y,72, Math.PI*0.6,Math.PI*1.4, C.white,260),
     ]);
-    shake(5,220);
-    burst(ex,ey,C.green,12);
-
-  } else if(tier===2){ // Two Pair – triple slash + ring
-    await heroDash(mid.x-20, mid.y-10, 160);
     await Promise.all([
-      slashArc(ex,ey,90,Math.PI*0.3,Math.PI*1.6,C.blue,320),
-      slashArc(ex,ey,60,Math.PI*1.2,Math.PI*0.2,C.cyan,280),
-      shockwave(ex,ey,C.cyan,80,350),
+      slashWave(ex,ey,C.white,200),
+      enemyHitFlash(0xffffff,90),
     ]);
-    shake(7,260);
-    burst(ex,ey,C.cyan,16);
+    shake(4,200); impactSparks(ex,ey,C.white,10,350);
 
-  } else if(tier===3){ // Three of a Kind – fire + triple
+  } else if(tier===1){
+    // One Pair — charge + double slash
+    await heroChargeGlow(C.green,160);
+    await heroDash(mid.x,mid.y-18,170);
+    await Promise.all([
+      slashArc(ex,ey,84,Math.PI*0.4,Math.PI*1.5,C.green,300),
+      slashArc(ex,ey,52,Math.PI*1.1,Math.PI*0.3,C.white,260),
+      slashWave(ex,ey,C.green,280),
+      enemyHitFlash(0xaaffaa,100),
+    ]);
+    shake(6,230);
+    impactSparks(ex,ey,C.green,14,400);
+    burst(ex,ey,C.green,10);
+
+  } else if(tier===2){
+    // Two Pair — converge energy + triple slash + shockwave
+    await Promise.all([
+      heroChargeGlow(C.blue,180),
+      energyConverge(ex,ey,C.cyan,8,240),
+    ]);
+    await heroDash(mid.x-18,mid.y-10,150);
+    await Promise.all([
+      slashArc(ex,ey,92,Math.PI*0.3,Math.PI*1.6,C.blue,320),
+      slashArc(ex,ey,62,Math.PI*1.2,Math.PI*0.2,C.cyan,280),
+      shockwave(ex,ey,C.cyan,84,360),
+      slashWave(ex,ey,C.blue,300),
+      enemyHitFlash(0xaaddff,110),
+    ]);
+    shake(8,270);
+    impactSparks(ex,ey,C.cyan,18,450);
+    burst(ex,ey,C.cyan,14);
+
+  } else if(tier===3){
+    // Three of a Kind — fire charge + triple slash + fire column
     screenFlash(C.orange,80);
-    await heroDash(ex-40, ey+20, 150);
     await Promise.all([
-      slashArc(ex,ey,100,Math.PI*0.1,Math.PI*1.7,C.orange,350),
-      slashArc(ex,ey,70, Math.PI*1.4,Math.PI*0.4,C.fire,300),
-      slashArc(ex,ey,45, Math.PI*0.7,Math.PI*0.1,C.gold,280),
-      fireColumn(ex,ey+30,500),
-      shockwave(ex,ey,C.fire,100,400),
+      heroChargeGlow(C.fire,200),
+      energyConverge(ex,ey,C.fire,10,250),
     ]);
-    shake(10,350);
-    burst(ex,ey,C.fire,22); burst(ex,ey,C.gold,12);
+    await heroDash(ex-38,ey+18,140);
+    await Promise.all([
+      slashArc(ex,ey,102,Math.PI*0.1,Math.PI*1.7,C.orange,360),
+      slashArc(ex,ey,72,Math.PI*1.4,Math.PI*0.4,C.fire,310),
+      slashArc(ex,ey,46,Math.PI*0.7,Math.PI*0.1,C.gold,285),
+      fireColumn(ex,ey+28,520),
+      shockwave(ex,ey,C.fire,105,420),
+      slashWave(ex,ey,C.fire,320),
+    ]);
+    await Promise.all([
+      enemyHitFlash(0xff8800,130),
+      craterBurst(ex,ey,C.fire,500),
+    ]);
+    shake(12,360);
+    impactSparks(ex,ey,C.fire,22,500);
+    burst(ex,ey,C.fire,20); burst(ex,ey,C.gold,10);
 
-  } else if(tier===4){ // Full House – mega combo
+  } else if(tier===4){
+    // Full House — purple vignette + mega combo
+    vignetteFlash(C.purple,500);
+    await Promise.all([
+      heroChargeGlow(C.purple,220),
+      energyConverge(ex,ey,C.purple,14,280),
+    ]);
     screenFlash(C.purple,100);
-    await heroDash(ex, ey+30, 140);
+    await heroDash(ex,ey+28,130);
     await Promise.all([
-      slashArc(ex,ey,110,Math.PI*0.0,Math.PI*1.8,C.purple,380),
-      slashArc(ex,ey,80, Math.PI*1.5,Math.PI*0.2,C.purple,340),
-      slashArc(ex,ey,55, Math.PI*0.5,Math.PI*1.2,C.white,300),
-      starBurst(ex,ey,C.purple,12,80,450),
-      shockwave(ex,ey,C.purple,130,500),
+      slashArc(ex,ey,114,Math.PI*0.0,Math.PI*1.8,C.purple,390),
+      slashArc(ex,ey,82,Math.PI*1.5,Math.PI*0.2,C.purple,350),
+      slashArc(ex,ey,56,Math.PI*0.5,Math.PI*1.2,C.white,310),
+      starBurst(ex,ey,C.purple,14,85,460),
+      shockwave(ex,ey,C.purple,136,520),
+      iceShard(ex,ey,400),
     ]);
-    shake(14,400); screenFlash(C.purple,60);
-    burst(ex,ey,C.purple,28); burst(ex,ey,C.gold,16);
+    await Promise.all([
+      enemyHitFlash(0xdd88ff,150),
+      craterBurst(ex,ey,C.purple,600),
+    ]);
+    shake(16,420); screenFlash(C.purple,60);
+    impactSparks(ex,ey,C.purple,26,550);
+    burst(ex,ey,C.purple,26); burst(ex,ey,C.gold,14);
 
-  } else if(tier===5){ // Four of a Kind – LIGHTNING
-    screenFlash(C.orange,150);
-    shake(5,200);
+  } else if(tier===5){
+    // Four of a Kind — lightning storm
+    vignetteFlash(C.gold,600);
+    screenFlash(C.orange,150); shake(5,200);
     await Promise.all([
-      heroDash(ex-20, ey+40, 130),
-      lightningBolt(ex,-20,ey,C.gold,400),
+      heroChargeGlow(C.gold,250),
+      energyConverge(ex,ey,C.gold,16,300),
+      lightningBolt(ex,-20,ey,C.gold,420),
+    ]);
+    await heroDash(ex-18,ey+38,120);
+    await Promise.all([
+      slashArc(ex,ey,122,Math.PI*0.0,Math.PI*2.0,C.gold,410),
+      slashArc(ex,ey,88,Math.PI*1.0,Math.PI*0.0,C.orange,370),
+      slashArc(ex,ey,56,Math.PI*0.5,Math.PI*1.5,C.white,330),
+      slashArc(ex,ey,32,Math.PI*1.3,Math.PI*0.7,C.gold,290),
+      shockwave(ex,ey,C.gold,164,560),
+      starBurst(ex,ey,C.gold,18,115,510),
+      lightningBolt(ex-30,-20,ey+10,C.cyan,350),
+      lightningBolt(ex+30,-20,ey+10,C.white,320),
     ]);
     await Promise.all([
-      slashArc(ex,ey,120,Math.PI*0.0,Math.PI*2.0,C.gold,400),
-      slashArc(ex,ey,85, Math.PI*1.0,Math.PI*0.0,C.orange,360),
-      slashArc(ex,ey,55, Math.PI*0.5,Math.PI*1.5,C.white,320),
-      slashArc(ex,ey,30, Math.PI*1.3,Math.PI*0.7,C.gold,280),
-      shockwave(ex,ey,C.gold,160,550),
-      starBurst(ex,ey,C.gold,16,110,500),
+      enemyHitFlash(0xffdd44,160),
+      craterBurst(ex,ey,C.gold,650),
     ]);
-    shake(18,500); screenFlash(C.gold,100);
-    burst(ex,ey,C.gold,32); burst(ex,ey,C.orange,20); burst(ex,ey,C.white,14);
+    shake(20,520); screenFlash(C.gold,100);
+    impactSparks(ex,ey,C.gold,32,600);
+    burst(ex,ey,C.gold,30); burst(ex,ey,C.orange,18); burst(ex,ey,C.white,12);
 
-  } else { // FIVE OF A KIND — ULTRA
-    // Dramatic darkness
+  } else {
+    // FIVE OF A KIND — ULTRA
     const dark=new PIXI.Graphics(); dark.beginFill(0x000000,0.0); dark.drawRect(0,0,W,H); dark.endFill();
     Lpopup.addChild(dark);
-    await new Promise(r=>anim(300,t=>dark.alpha=t*0.85,r));
+    await new Promise(r=>anim(350,t=>dark.alpha=t*0.9,r));
 
-    // Title text
-    const ult=new PIXI.Text('FIVE OF A KIND',{fontFamily:FONT,fontSize:14,fill:'#ffd700',
-      stroke:'#000',strokeThickness:5,align:'center'});
+    const ult=new PIXI.Text('FIVE OF A KIND',{fontFamily:FONT,fontSize:14,fill:'#ffd700',align:'center'});
     ult.anchor.set(0.5); ult.position.set(W/2,H/2); ult.scale.set(0);
     Lpopup.addChild(ult);
-    await new Promise(r=>anim(400,t=>ult.scale.set(easeBack(t)*1.1),r));
-    await wait(400);
+    await new Promise(r=>anim(450,t=>ult.scale.set(easeBack(t)*1.15),r));
+    await wait(450);
 
-    // Hero glows gold
     heroSpr.tint=0xffd700;
-    await new Promise(r=>anim(200,t=>dark.alpha=0.85-t*0.85,r));
+    await Promise.all([
+      heroChargeGlow(C.gold,300),
+      energyConverge(ex,ey,C.gold,24,350),
+      new Promise(r=>anim(300,t=>dark.alpha=0.9-t*0.9,r)),
+    ]);
     Lpopup.removeChild(dark); Lpopup.removeChild(ult);
 
-    // Charge to center
-    await heroDash(ex, ey+20, 120);
-    shake(6,200);
-
-    // ALL slashes simultaneously + lightning from all sides
+    vignetteFlash(C.gold,800);
+    await heroDash(ex,ey+18,110); shake(8,220);
     await Promise.all([
-      slashArc(ex,ey,140,0,Math.PI*2,C.gold,500),
-      slashArc(ex,ey,105,Math.PI*0.5,Math.PI*2.5,C.orange,480),
-      slashArc(ex,ey,75,Math.PI*1.0,Math.PI*3.0,C.white,460),
-      slashArc(ex,ey,45,Math.PI*1.5,Math.PI*3.5,C.gold,440),
-      lightningBolt(ex,-20,ey,C.gold,300),
-      lightningBolt(ex-60,-20,ey+20,C.cyan,280),
-      lightningBolt(ex+60,-20,ey+20,C.white,260),
-      starBurst(ex,ey,C.gold,24,160,600),
-      shockwave(ex,ey,C.gold,220,700),
-      shockwave(ex,ey,C.white,280,800),
+      slashArc(ex,ey,142,0,Math.PI*2,C.gold,520),
+      slashArc(ex,ey,108,Math.PI*0.5,Math.PI*2.5,C.orange,500),
+      slashArc(ex,ey,78,Math.PI*1.0,Math.PI*3.0,C.white,480),
+      slashArc(ex,ey,48,Math.PI*1.5,Math.PI*3.5,C.gold,460),
+      lightningBolt(ex,-20,ey,C.gold,320),
+      lightningBolt(ex-65,-20,ey+20,C.cyan,300),
+      lightningBolt(ex+65,-20,ey+20,C.white,280),
+      starBurst(ex,ey,C.gold,28,168,620),
+      shockwave(ex,ey,C.gold,228,720),
+      shockwave(ex,ey,C.white,290,840),
+      iceShard(ex,ey,500),
+      fireColumn(ex,ey+20,600),
     ]);
-    shake(28,700);
-    screenFlash(C.white,200);
-    await wait(100);
-    screenFlash(C.gold,100);
-
-    burst(ex,ey,C.gold,40); burst(ex,ey,C.white,24);
-    burst(ex,ey,C.orange,20); burst(ex,ey,C.cyan,16);
+    await Promise.all([
+      enemyHitFlash(0xffffff,200),
+      craterBurst(ex,ey,C.gold,700),
+    ]);
+    shake(30,750); screenFlash(C.white,220);
+    await wait(120); screenFlash(C.gold,120);
+    impactSparks(ex,ey,C.gold,40,700);
+    impactSparks(ex,ey,C.white,24,650);
+    burst(ex,ey,C.gold,38); burst(ex,ey,C.white,22);
+    burst(ex,ey,C.orange,18); burst(ex,ey,C.cyan,14);
     heroSpr.tint=0xffffff;
   }
 
   await heroReturn(200);
-  await enemyKnock(tier>=3?-30:tier>=1?-15:-8, 300);
+  await enemyKnock(tier>=5?-44:tier>=3?-32:tier>=1?-16:-9, 320);
 }
 
-// Score tally animation (chips count up)
 async function tallyScore(result){
   return new Promise(res=>{
     let displayC=0;
@@ -1279,18 +1410,39 @@ async function tallyScore(result){
   });
 }
 
-async function resolveEnemyIntent(result){
-  if(!G.intent) G.intent=makeEnemyIntent();
+// ── Enemy turn: animated attack sequence ──────────────────────────────────────
+async function doEnemyTurn(result){
+  G.phase='enemyTurn';
   const intent=G.intent;
+
+  // Show big "ENEMY TURN" indicator
+  const etxt=new PIXI.Text('ENEMY TURN',{fontFamily:FONT,fontSize:16,fill:'#ff4567',align:'center'});
+  etxt.anchor.set(0.5); etxt.position.set(W/2, H*0.45); etxt.alpha=0;
+  Lpopup.addChild(etxt);
+  await new Promise(r=>anim(250,t=>etxt.alpha=t,r));
+  await wait(350);
+  await new Promise(r=>anim(250,t=>etxt.alpha=1-t,r));
+  Lpopup.removeChild(etxt);
+
   if(intent.type==='guard'){
-    G.enemyShield+=25+G.wave*3;
-    smallPopup(enemyBase.x,enemyBase.y-18,`SHIELD +${25+G.wave*3}`,C.cyan);
+    const shAmt=30+G.wave*3;
+    G.enemyShield+=shAmt;
+    await Promise.all([
+      shockwave(enemyBase.x,enemyBase.y,C.cyan,90,400),
+      shockwave(enemyBase.x,enemyBase.y,C.white,60,300),
+      energyConverge(enemyBase.x,enemyBase.y,C.cyan,10,350),
+      new Promise(r=>{ smallPopup(enemyBase.x,enemyBase.y-28,`+SHIELD ${shAmt}`,C.cyan); setTimeout(r,450); }),
+    ]);
   } else {
+    // Enemy dashes at hero
+    await enemyDash(heroBase.x, heroBase.y-60, 200);
+
     let dmg=intent.dmg;
     let guard=result.tier*3+Math.min(8,G.combo);
     if(result.tier>=4) guard+=6;
     dmg=Math.max(0,dmg-guard-G.block);
     G.block=0;
+
     if(intent.type==='curse'){
       const d=G.dice[Math.floor(Math.random()*G.dice.length)];
       if(d){ d.value=Math.max(1,d.value-1); d.vy=-24; }
@@ -1299,50 +1451,44 @@ async function resolveEnemyIntent(result){
     if(dmg>0){
       G.pHP=Math.max(0,G.pHP-dmg);
       screenFlash(C.hp,150);
-      smallPopup(heroBase.x,heroBase.y-34,`-${dmg}`,C.red);
-      await enemyKnock(result.tier>=3?8:16,220);
+      bigDmgText(heroBase.x, heroBase.y-34, `-${dmg}`, C.red);
+      impactSparks(heroBase.x,heroBase.y,C.red,16,400);
+      shake(intent.type==='heavy'?14:9, 320);
     } else {
+      shockwave(heroBase.x,heroBase.y,C.cyan,60,350);
       smallPopup(heroBase.x,heroBase.y-34,'BLOCKED',C.cyan);
-      burst(heroBase.x,heroBase.y,C.cyan,12);
+      burst(heroBase.x,heroBase.y,C.cyan,14);
     }
+    await wait(200);
+    await enemyReturn(180);
   }
+
   G.intent=makeEnemyIntent();
 }
 
-// ── Game actions ───────────────────────────────────────────────────────────────
+// ── Game actions ──────────────────────────────────────────────────────────────
 async function onPlayHand(){
   if(G.busy||G.phase!=='roll') return;
-  if(G.handsLeft<=0){ smallPopup(W/2,400,'NO HANDS LEFT',C.red); return; }
   G.busy=true; G.phase='attacking';
 
   const active=G.dice.filter(d=>d.held);
   const toScore=active.length?active:G.dice;
   const result=evalHand(toScore);
-  G.handsLeft--;
-  G.blazeNextMult=1; // reset blaze mult
+
+  G.blazeNextMult=1;
   G.focus=0;
 
   const col=HAND_COLS[result.tier];
-  if(_handTxt){
-    _handTxt.text=result.hand.name;
-    _handTxt.style.fill=col;
-  }
+  if(_handTxt){ _handTxt.text=result.hand.name; _handTxt.style.fill=col; }
 
-  // Show hand name popup
   bigPopup(result.hand.name, col, result.tier>=4?2:result.tier>=2?1.5:1.2);
-
-  // Play attack animation
   await playAttackAnim(result.tier, result.score, col);
-
-  // Score tally
   await tallyScore(result);
 
-  // Deal damage
   let dealt=result.score;
   if(G.enemyShield>0){
     const blocked=Math.min(G.enemyShield,dealt);
-    G.enemyShield-=blocked;
-    dealt-=blocked;
+    G.enemyShield-=blocked; dealt-=blocked;
     smallPopup(enemyBase.x,enemyBase.y-34,`SHIELD -${blocked}`,C.cyan);
   }
   G.eHP=Math.max(0,G.eHP-dealt);
@@ -1354,47 +1500,48 @@ async function onPlayHand(){
   }
 
   if(G.eHP<=0){
-    // Enemy defeated
+    // Wave cleared — no card panel, just XP and next wave
     screenFlash(C.hpG,250);
     burst(enemyBase.x,enemyBase.y,0x55ee33,30);
     burst(enemyBase.x,enemyBase.y,C.gold,18);
-    await wait(600);
-    const xpGain=20+G.wave*8;
+    await wait(500);
+    const xpGain=20+G.wave*10;
     addXP(xpGain);
     smallPopup(W/2,H*0.4,`+${xpGain} XP`,C.xpC);
-    await wait(500);
-    startLevelUp();
-  } else if(G.handsLeft<=0){
-    await resolveEnemyIntent(result);
-    smallPopup(W/2,400,'OUT OF HANDS',C.orange);
-    await wait(500);
-    if(G.pHP<=0){ showGameOver(); return; }
+    // Small heal each wave
+    const healAmt=10;
+    G.pHP=Math.min(G.pMaxHP,G.pHP+healAmt);
+    smallPopup(W/2,H*0.48,`+${healAmt} HP`,C.hpG);
+    bigPopup(`WAVE ${G.wave} CLEARED!`,C.gold,1.5);
+    await wait(1200);
     nextRound();
   } else {
-    await resolveEnemyIntent(result);
+    // Enemy counter-attack
+    await doEnemyTurn(result);
     if(G.pHP<=0){ showGameOver(); return; }
     G.phase='roll'; G.busy=false;
     rollUnheld();
     G.dice.forEach(d=>d.held=false);
     rebuildDiceZones();
+    buildAbilityBar();
   }
 }
 
 function onDiscard(){
   if(G.busy||G.phase!=='roll') return;
-  if(G.discardsLeft<=0){ smallPopup(W/2,400,'NO DISCARDS',C.red); return; }
-  const toDiscard=G.dice.filter(d=>!d.held);
-  if(!toDiscard.length){ smallPopup(W/2,400,'HOLD DICE TO KEEP',C.orange); return; }
+  if(G.discardsLeft<=0){ smallPopup(W/2,400,'NO REROLLS LEFT',C.red); return; }
+  const toReroll=G.dice.filter(d=>!d.held);
+  if(!toReroll.length){ smallPopup(W/2,400,'HOLD DICE TO KEEP',C.orange); return; }
   G.discardsLeft--;
-  toDiscard.forEach(d=>{ d.value=Math.ceil(Math.random()*6); d.vy=-55; });
-  G.dice.forEach(d=>d.held=false);
+  // Reroll unheld dice — held dice keep their value AND stay floating
+  toReroll.forEach(d=>{ d.value=Math.ceil(Math.random()*6); d.vy=-60; });
   rebuildDiceZones();
 }
 
-// ── Abilities ─────────────────────────────────────────────────────────────────
+// ── Abilities (unlocked by XP) ────────────────────────────────────────────────
 async function useAbility(i){
   const ab=G.abilities[i];
-  if(!ab||!ab.unlocked||!ab.ready||G.busy) return;
+  if(!ab||!ab.unlocked||!ab.ready||G.busy||G.phase!=='roll') return;
   ab.ready=false; G.busy=true;
 
   if(ab.id==='blaze'){
@@ -1403,13 +1550,12 @@ async function useAbility(i){
       heroDash(enemyBase.x,enemyBase.y+30,150),
       fireColumn(enemyBase.x,enemyBase.y+20,600),
     ]);
-    const dmg=60;
+    const dmg=60+G.wave*2;
     G.eHP=Math.max(0,G.eHP-dmg);
     bigDmgText(enemyBase.x,enemyBase.y-40,`BLAZE -${dmg}`,C.fire);
     G.blazeNextMult=2;
     smallPopup(W/2,H*0.5,'MULT x2 NEXT HAND',C.orange);
-    await heroReturn(200);
-    shake(10,300);
+    await heroReturn(200); shake(10,300);
 
   } else if(ab.id==='thunder'){
     const dmg=Math.ceil(G.eMaxHP*0.3);
@@ -1424,7 +1570,6 @@ async function useAbility(i){
     burst(enemyBase.x,enemyBase.y,C.gold,24);
 
   } else if(ab.id==='frost'){
-    // Freeze – all dice keep values, mult tripled next hand
     const g2=new PIXI.Graphics(); g2.beginFill(C.ice,0.3); g2.drawRect(0,0,W,H); g2.endFill();
     Lpopup.addChild(g2);
     await Promise.all([shockwave(W/2,H/2,C.ice,200,400), starBurst(W/2,H/2,C.ice,16,120,350)]);
@@ -1434,125 +1579,39 @@ async function useAbility(i){
     setTimeout(()=>Lpopup.removeChild(g2),300);
 
   } else if(ab.id==='deathspin'){
-    // Reroll all dice 3x, keep best value per die
     const best=G.dice.map(d=>d.value);
     for(let r=0;r<3;r++){
       await wait(150);
       G.dice.forEach((d,i)=>{ const nv=Math.ceil(Math.random()*6); if(nv>best[i])best[i]=nv; d.vy=-40; });
     }
     G.dice.forEach((d,i)=>{ d.value=best[i]; d.held=false; });
-    screenFlash(C.purple,200);
-    burst(W/2,H*0.55,C.purple,28);
+    screenFlash(C.purple,200); burst(W/2,H*0.55,C.purple,28);
     smallPopup(W/2,H*0.5,'DEATH SPIN: BEST VALUES',C.purple);
     rebuildDiceZones();
   }
 
-  ab.ready=true; // abilities are reusable once per run (no cooldown here, 1/wave)
-  // Make not ready again until next wave
-  ab.ready=false;
   if(G.eHP<=0){
     screenFlash(C.hpG,220);
     burst(enemyBase.x,enemyBase.y,0x55ee33,28);
-    const xpGain=18+G.wave*7;
+    const xpGain=20+G.wave*10;
     addXP(xpGain);
     smallPopup(W/2,H*0.4,`+${xpGain} XP`,C.xpC);
-    await wait(450);
+    bigPopup(`WAVE ${G.wave} CLEARED!`,C.gold,1.5);
+    await wait(1000);
     G.busy=false;
-    startLevelUp();
+    nextRound();
     return;
   }
   G.busy=false;
+  buildAbilityBar();
 }
 
-// ── Level-up (Joker selection) ─────────────────────────────────────────────────
-function startLevelUp(){
-  G.phase='levelup';
-  showJokerPanel(genJokers());
-}
-
-function genJokers(){
-  const pool=[
-    {name:'Firestarter',desc:'fire infuse\nall dice',bg:0x440d00,bc:C.fire,   apply:()=>G.dice.forEach(d=>{if(d.el==='none')d.el='fire';})},
-    {name:'Frostbind',  desc:'ice infuse\nall dice', bg:0x001a33,bc:C.ice,    apply:()=>G.dice.forEach(d=>{if(d.el==='none')d.el='ice';})},
-    {name:'Venomous',   desc:'poison\nall dice',     bg:0x0d3300,bc:C.poison, apply:()=>G.dice.forEach(d=>{if(d.el==='none')d.el='poison';})},
-    {name:'Extra Die',  desc:'+1 die\nto pool',      bg:0x0d1a55,bc:C.blue,   apply:()=>G.diceCount=Math.min(7,G.diceCount+1)},
-    {name:'Twin Dice',  desc:'+2 dice\nto pool',     bg:0x051040,bc:C.blue,   apply:()=>G.diceCount=Math.min(7,G.diceCount+2)},
-    {name:'Glass Knuckles',desc:'+2 mult\nall hands',bg:0x330011,bc:C.mult,   apply:()=>G.jokers.push({type:'mult',val:2})},
-    {name:'Gold Stack', desc:'+15 chips\nall hands', bg:0x332200,bc:C.gold,   apply:()=>G.jokers.push({type:'chips',val:15})},
-    {name:'Speed Hands',desc:'+1 hand\nevery wave',  bg:0x003322,bc:C.green,  apply:()=>{G.jokers.push({type:'hand'});}},
-    {name:'Mend',       desc:'restore\n20 HP',       bg:0x003311,bc:0x55ff88, apply:()=>G.pHP=Math.min(G.pMaxHP,G.pHP+20)},
-    {name:'Bulwark',    desc:'+20 max HP\n& +10 HP',  bg:0x330011,bc:C.hp,    apply:()=>{G.pMaxHP+=20;G.pHP=Math.min(G.pMaxHP,G.pHP+10);}},
-  ];
-  const f=pool.filter(u=>!(u.name==='Extra Die'&&G.diceCount>=7)&&!(u.name==='Twin Dice'&&G.diceCount>=6));
-  for(let i=f.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[f[i],f[j]]=[f[j],f[i]];}
-  return f.slice(0,3);
-}
-
-let jZones=[];
-function showJokerPanel(ups){
-  Lover.removeChildren(); jZones=[];
-  const ov=new PIXI.Graphics(); ov.beginFill(0x000000,0.88); ov.drawRect(0,0,W,H); ov.endFill();
-  Lover.addChild(ov);
-
-  const title=new PIXI.Text('CHOOSE A JOKER',{fontFamily:FONT,fontSize:14,fill:'#ffd700',stroke:'#000',strokeThickness:5,align:'center'});
-  title.anchor.set(0.5); title.position.set(W/2,H*0.13); Lover.addChild(title);
-
-  const sub=new PIXI.Text(`wave ${G.wave} cleared  |  lv ${G.level+1}`,{fontFamily:FONT,fontSize:7,fill:'#cc99ff',stroke:'#000',strokeThickness:2,align:'center'});
-  sub.anchor.set(0.5); sub.position.set(W/2,H*0.21); Lover.addChild(sub);
-
-  const cW=96, cH=148, cY=H*0.54;
-  [W*0.18,W*0.5,W*0.82].forEach((x,i)=>{
-    const u=ups[i]; if(!u) return;
-    const g=new PIXI.Graphics();
-    // Shadow
-    g.beginFill(0x000000,0.65); g.drawRect(x-cW/2+5,cY-cH/2+5,cW,cH); g.endFill();
-    // Body
-    g.beginFill(u.bg); g.drawRect(x-cW/2,cY-cH/2,cW,cH); g.endFill();
-    // Pixel bevel
-    g.beginFill(0xffffff,0.22); g.drawRect(x-cW/2,cY-cH/2,cW,2); g.endFill();
-    g.beginFill(0xffffff,0.1);  g.drawRect(x-cW/2,cY-cH/2,2,cH); g.endFill();
-    g.beginFill(0x000000,0.3);  g.drawRect(x-cW/2,cY+cH/2-2,cW,2); g.endFill();
-    // Border
-    g.lineStyle(2,u.bc,0.95); g.drawRect(x-cW/2,cY-cH/2,cW,cH); g.lineStyle(0);
-    // Icon panel
-    g.beginFill(0x000000,0.4); g.drawRect(x-20,cY-52,40,40); g.endFill();
-    g.beginFill(u.bc,0.9);    g.drawRect(x-18,cY-50,36,36); g.endFill();
-    g.beginFill(0xffffff,0.25);g.drawRect(x-17,cY-49,16,16); g.endFill();
-
-    const nt=new PIXI.Text(u.name,{fontFamily:FONT,fontSize:6,fill:'#ffffff',stroke:'#000',strokeThickness:2,align:'center',wordWrap:true,wordWrapWidth:cW-10});
-    nt.anchor.set(0.5); nt.position.set(x,cY+6); g.addChild(nt);
-    const dt=new PIXI.Text(u.desc,{fontFamily:FONT,fontSize:5,fill:'#cccccc',stroke:'#000',strokeThickness:1,align:'center'});
-    dt.anchor.set(0.5); dt.position.set(x,cY+36); g.addChild(dt);
-
-    g.eventMode='static'; g.cursor='pointer';
-    g.on('pointertap',()=>pickJoker(u));
-    g.on('pointerover',()=>{ g.tint=0xffeeaa; });
-    g.on('pointerout', ()=>{ g.tint=0xffffff; });
-    Lover.addChild(g); jZones.push(g);
-  });
-
-  // Pulse title
-  let p=0; const pt=app.ticker.add(()=>{
-    if(G.phase!=='levelup'){app.ticker.remove(pt);return;}
-    p+=0.05; title.scale.set(1+Math.sin(p)*0.04);
-  });
-}
-
-function pickJoker(u){
-  u.apply();
-  G.level++;
-  // Restore ability readiness each wave
-  G.abilities.forEach(ab=>{ if(ab.unlocked) ab.ready=true; });
-  Lover.removeChildren(); jZones=[];
-  burst(W/2,H/2,C.gold,28); screenFlash(C.gold,120);
-  nextRound();
-}
-
+// ── Next round (no joker panel) ───────────────────────────────────────────────
 function nextRound(){
   G.wave++;
-  G.handsLeft=4+G.jokers.filter(j=>j.type==='hand').length;
   G.discardsLeft=3;
   G.combo=0; G.block=0; G.focus=0;
+  G.abilities.forEach(ab=>{ if(ab.unlocked) ab.ready=true; });
   spawnEnemy();
   freshRoll();
   rebuildDiceZones();
@@ -1561,7 +1620,7 @@ function nextRound(){
   smallPopup(W/2,H*0.35,`WAVE ${G.wave}`,C.gold);
 }
 
-// ── Game over ──────────────────────────────────────────────────────────────────
+// ── Game over ─────────────────────────────────────────────────────────────────
 function showGameOver(){
   G.phase='dead'; G.busy=true;
   Lover.removeChildren();
@@ -1569,11 +1628,11 @@ function showGameOver(){
   setTimeout(()=>{
     const ov=new PIXI.Graphics(); ov.beginFill(0x000000,0.88); ov.drawRect(0,0,W,H); ov.endFill();
     Lover.addChild(ov);
-    const g=new PIXI.Text('GAME OVER',{fontFamily:FONT,fontSize:22,fill:'#ff3355',stroke:'#000',strokeThickness:7,align:'center'});
+    const g=new PIXI.Text('GAME OVER',{fontFamily:FONT,fontSize:22,fill:'#ff3355',align:'center'});
     g.anchor.set(0.5); g.position.set(W/2,H*0.36); Lover.addChild(g);
-    const w=new PIXI.Text(`WAVE ${G.wave}  ·  LV ${G.level}\n${G.jokers.length} JOKERS COLLECTED`,{fontFamily:FONT,fontSize:8,fill:'#ccaaff',stroke:'#000',strokeThickness:3,align:'center'});
+    const w=new PIXI.Text(`WAVE ${G.wave}  ·  LV ${G.level}`,{fontFamily:FONT,fontSize:8,fill:'#ccaaff',align:'center'});
     w.anchor.set(0.5); w.position.set(W/2,H*0.5); Lover.addChild(w);
-    const r=new PIXI.Text('TAP TO RETRY',{fontFamily:FONT,fontSize:9,fill:'#ffd700',stroke:'#000',strokeThickness:3,align:'center'});
+    const r=new PIXI.Text('TAP TO RETRY',{fontFamily:FONT,fontSize:9,fill:'#ffd700',align:'center'});
     r.anchor.set(0.5); r.position.set(W/2,H*0.64); r.eventMode='static'; r.cursor='pointer';
     r.on('pointertap',()=>{ Lover.removeChildren(); newGame(); rebuildDiceZones(); buildAbilityBar(); });
     Lover.addChild(r);
@@ -1582,7 +1641,7 @@ function showGameOver(){
   },900);
 }
 
-// ── Main game loop ─────────────────────────────────────────────────────────────
+// ── Init & main loop ──────────────────────────────────────────────────────────
 bakeAll();
 newGame();
 buildWorld();
@@ -1595,13 +1654,11 @@ rebuildDiceZones();
 app.ticker.add(()=>{
   G.tick+=app.ticker.deltaMS;
   if(G.phase==='dead') return;
-
   drawBG();
   drawWorld();
   drawDice();
   drawButtons();
   drawBars();
-  drawStats();
   drawAbilityBar();
   if(G.phase==='roll') updateScorePanel();
 });
